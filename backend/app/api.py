@@ -1,12 +1,15 @@
-"""HTTP routes. Phase 2 exposes read-only access to incidents and the simulated diagnostics.
+"""HTTP routes: read-only incidents and simulated diagnostics, plus investigations (Phase 3A).
 
-Remediation execution is intentionally NOT exposed yet: it needs the Phase 5 approval gate.
+Starting an investigation is the only write. Remediation execution is intentionally NOT exposed
+yet: it needs the Phase 5 approval gate.
 """
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Path, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Path, Query, Request
 
+from app.agent.models import Investigation
+from app.agent.service import InvestigationService
 from app.config import APP_VERSION
 from app.schemas import (
     DeploymentsQuery,
@@ -28,7 +31,10 @@ from app.simulator.service import Simulator
 
 IncidentIdPath = Annotated[str, Path(pattern=r"^INC-\d{4}$", description="Incident id, e.g. INC-1001")]
 
+InvestigationIdPath = Annotated[str, Path(pattern=r"^inv-\d{4,}$", description="Investigation id, e.g. inv-0001")]
+
 _ERRORS: dict[int | str, dict[str, Any]] = {404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}}
+_START_ERRORS: dict[int | str, dict[str, Any]] = {**_ERRORS, 409: {"model": ErrorResponse}}
 
 router = APIRouter()
 
@@ -36,6 +42,11 @@ router = APIRouter()
 def _sim(request: Request) -> Simulator:
     sim: Simulator = request.app.state.simulator
     return sim
+
+
+def _investigations(request: Request) -> InvestigationService:
+    svc: InvestigationService = request.app.state.investigations
+    return svc
 
 
 @router.get("/health", response_model=HealthResponse, tags=["system"])
@@ -91,3 +102,38 @@ def get_deployments(
     incident_id: IncidentIdPath, q: Annotated[DeploymentsQuery, Query()], request: Request
 ) -> DeploymentsResult:
     return _sim(request).get_recent_deployments(GetDeploymentsArgs(incident_id=incident_id, **q.model_dump()))
+
+
+@router.post(
+    "/api/incidents/{incident_id}/investigations",
+    response_model=Investigation,
+    status_code=202,
+    responses=_START_ERRORS,
+    tags=["investigations"],
+)
+def start_investigation(incident_id: IncidentIdPath, request: Request, background: BackgroundTasks) -> Investigation:
+    """Start an investigation and return immediately; poll the returned id until it is not 'running'."""
+    svc = _investigations(request)
+    started = svc.start(incident_id)
+    background.add_task(svc.run, started.id)
+    return started
+
+
+@router.get(
+    "/api/incidents/{incident_id}/investigations/latest",
+    response_model=Investigation,
+    responses=_ERRORS,
+    tags=["investigations"],
+)
+def latest_investigation(incident_id: IncidentIdPath, request: Request) -> Investigation:
+    return _investigations(request).latest(incident_id)
+
+
+@router.get(
+    "/api/investigations/{investigation_id}",
+    response_model=Investigation,
+    responses=_ERRORS,
+    tags=["investigations"],
+)
+def get_investigation(investigation_id: InvestigationIdPath, request: Request) -> Investigation:
+    return _investigations(request).get(investigation_id)

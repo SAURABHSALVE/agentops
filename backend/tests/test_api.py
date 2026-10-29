@@ -96,7 +96,9 @@ def test_deployments_endpoint(client: TestClient) -> None:
 def test_no_remediation_or_write_routes_are_exposed(client: TestClient) -> None:
     paths = client.get("/openapi.json").json()["paths"]
     for path, ops in paths.items():
-        assert set(ops) <= {"get"}, f"unexpected write method on {path}"
+        # Starting an investigation is the only write; it runs read-only tools and changes nothing else.
+        allowed = {"get", "post"} if path == "/api/incidents/{incident_id}/investigations" else {"get"}
+        assert set(ops) <= allowed, f"unexpected write method on {path}"
         assert "remediat" not in path and "approve" not in path
     assert client.post("/api/incidents/INC-1001/remediation", json={}).status_code in (404, 405)
 

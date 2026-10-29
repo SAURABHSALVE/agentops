@@ -5,9 +5,19 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.agent.mock_provider import MockProvider
+from app.agent.provider import LLMProvider
+from app.agent.service import InvestigationService
+from app.agent.store import InMemoryInvestigationStore
 from app.api import router
 from app.config import APP_VERSION, Settings
-from app.errors import AgentOpsError, IncidentNotFoundError, MetricNotAvailableError
+from app.errors import (
+    AgentOpsError,
+    IncidentNotFoundError,
+    InvestigationInProgressError,
+    InvestigationNotFoundError,
+    MetricNotAvailableError,
+)
 from app.repository import InMemoryIncidentRepository
 from app.schemas import ErrorDetail, ErrorResponse
 from app.simulator.service import Simulator
@@ -17,6 +27,8 @@ logger = logging.getLogger("agentops")
 _STATUS_BY_CODE = {
     IncidentNotFoundError.code: 404,
     MetricNotAvailableError.code: 404,
+    InvestigationNotFoundError.code: 404,
+    InvestigationInProgressError.code: 409,
 }
 
 
@@ -24,7 +36,11 @@ def _envelope(status: int, detail: ErrorDetail) -> JSONResponse:
     return JSONResponse(status_code=status, content=ErrorResponse(error=detail).model_dump(exclude_none=True))
 
 
-def create_app(simulator: Simulator | None = None, settings: Settings | None = None) -> FastAPI:
+def create_app(
+    simulator: Simulator | None = None,
+    settings: Settings | None = None,
+    provider: LLMProvider | None = None,
+) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
         title="AgentOps AI API",
@@ -35,6 +51,9 @@ def create_app(simulator: Simulator | None = None, settings: Settings | None = N
         ),
     )
     app.state.simulator = simulator or Simulator(InMemoryIncidentRepository())
+    app.state.investigations = InvestigationService(
+        app.state.simulator, InMemoryInvestigationStore(), provider or MockProvider(), settings
+    )
 
     app.add_middleware(
         CORSMiddleware,
