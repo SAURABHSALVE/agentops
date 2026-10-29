@@ -22,3 +22,19 @@ class UnknownRemediationError(AgentOpsError):
 
 class RemediationNotApplicableError(AgentOpsError):
     code = "remediation_not_applicable"
+
+
+class InvestigationNotFoundError(AgentOpsError):
+    code = "investigation_not_found"
+
+
+class InvestigationInProgressError(AgentOpsError):
+    code = "investigation_in_progress"
+
+
+class ProviderError(Exception):
+    """A model provider failed. The message is for server logs only and is never returned to clients."""
+
+
+class TransientProviderError(ProviderError):
+    """A provider failure that is safe to retry once (timeout, rate limit, 5xx). Tools are read-only."""
