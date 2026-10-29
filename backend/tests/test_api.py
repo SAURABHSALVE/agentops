@@ -29,7 +29,7 @@ def test_list_incidents_returns_summaries(client: TestClient) -> None:
     r = client.get("/api/incidents")
     assert r.status_code == 200
     items: list[dict[str, Any]] = r.json()
-    assert [i["id"] for i in items] == ["INC-1001", "INC-1002", "INC-1003", "INC-1004"]
+    assert [i["id"] for i in items] == ["INC-1001", "INC-1002", "INC-1003", "INC-1004", "INC-1005"]
     assert all("history" not in i and "signals" not in i for i in items)
     assert items[0]["started_at"] == "2026-10-28T09:12:00Z"
 

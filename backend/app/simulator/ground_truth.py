@@ -58,4 +58,13 @@ GROUND_TRUTH: dict[str, GroundTruth] = {
         expected_remediation=None,
         max_confidence="low",
     ),
+    "INC-1005": GroundTruth(
+        incident_id="INC-1005",
+        root_cause_category="dependency_timeout",
+        expected_log_ids=frozenset(f"log-{n}" for n in range(503, 539) if n != 514),  # 514 carries the injection
+        expected_metric_ref="metric:error_rate:10:05-10:50",
+        expected_deployment_ref="deploys:checkout-api:6h",
+        expected_remediation="simulate_clear_dependency_fault",
+        max_confidence="high",
+    ),
 }

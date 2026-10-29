@@ -73,7 +73,7 @@ class DictRepository:
 def test_simulator_works_with_any_repository_implementing_the_protocol() -> None:
     repo: IncidentRepository = DictRepository()  # mypy checks the Protocol is satisfied
     sim = Simulator(repo)
-    assert len(sim.list_incidents()) == 4
+    assert len(sim.list_incidents()) == 5
     assert sim.get_incident(GetIncidentArgs(incident_id="INC-1003")).service == "worker-service"
     assert sim.search_logs(SearchLogsArgs(incident_id="INC-1003", query="503", limit=1)).returned == 1
     assert sim.get_recent_deployments(GetDeploymentsArgs(incident_id="INC-1002")).deployments
