@@ -16,8 +16,9 @@ from app.simulator.fixtures import INCIDENTS
 from app.simulator.service import Simulator
 
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
+# `re.compile(` is legitimate; only the bare builtin compile() is forbidden.
 FORBIDDEN = re.compile(
-    r"\b(subprocess|os\.system|os\.popen|os\.exec\w*|pty|ctypes|__import__)\b|\beval\(|\bexec\(|\bcompile\("
+    r"\b(subprocess|os\.system|os\.popen|os\.exec\w*|pty|ctypes|__import__)\b|\beval\(|\bexec\(|(?<![\w.])compile\("
 )
 
 
