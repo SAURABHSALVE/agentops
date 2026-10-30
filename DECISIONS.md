@@ -122,3 +122,17 @@ The user asked to complete the phases through 5 and test the whole app locally, 
 
 **D-029 · accepted · Deployment was not performed: the only AWS identity is the root user.**
 SECURITY.md and D-020 forbid root for deployment. Verified read-only (STS identity is root); nothing was created. The deployment code is tested (35 template tests, strict cdk-nag synth in both modes) but unverified against a real account until a least-privilege identity is provided.
+
+
+**D-030 · accepted · Real-telemetry mode: a lab system measured into a dataset, behind a `TelemetrySource` seam.**
+- *Why:* the user asked for the product to feel real. Real production data is out of reach (no access, privacy, no AWS identity that is not root), and Docker is not available here, so the OpenTelemetry demo was not an option. A small real system (`backend/lab`: HTTP dependencies, a real SQLite database, a real queue) is run with faults injected and its logs and metrics are measured into `data/captured/lab-capture.json`.
+- *Seam:* the four diagnostic tools read through `TelemetrySource` (`FixtureSource` is the unchanged default, `CapturedSource` the new one, selected by `TELEMETRY_DATASET`). All enforcement (allowlist, argument validation, size caps, grounding, approval) sits above it, so a new source cannot widen what the agent may do. The 305 existing tests passed unchanged after the refactor.
+- *Honesty:* the clock is compressed 30x and the release history before each run is a fixed record; both are stated in the dataset's `meta`, in docs/REAL_TELEMETRY.md and in the UI header ("captured from a lab system, not production data"). Remediation actions stay simulated and allowlisted.
+- *Rejected:* typing "realistic" numbers into more fixtures (that would still be invented); tuning the mock provider's regexes to the new log wording (it would flatter the mock, so its behaviour on this data is reported as it is); mixing simulated and captured incidents in one list (the mode is explicit and labelled).
+- *Not done:* CloudWatch. It would be a third `TelemetrySource` and needs a read-only identity, redaction and bounded queries (listed in docs/REAL_TELEMETRY.md).
+
+**D-031 · accepted · Real data exposed three agent-loop weaknesses; fixed in the tools and loop, not by tuning prompts.**
+- *What failed:* on the captured incidents the live model produced 1 completed run out of its first 6 (see docs/EVALUATION.md, Section 4). Causes: no signal that the round budget was running out; `search_logs("error")` found nothing because the word is the level, not part of the message; and no valid way to cite "I searched and found nothing" (the model cited `none` and the whole answer was correctly rejected).
+- *Decision:* last round forced to conclude (no tools, explicit notice; answers still fully validated); level names match in `search_logs`; an empty log search returns a citable absence id, mirroring deployments. Rejected: dropping ungrounded citations instead of failing (it would silently weaken the grounding rule), and more prompt wording (the prompt already forbade `none` and the model ignored it).
+- *Result:* 9/9 live runs completed on captured data; the simulated live evaluation went from 16/18 to 18/18 completed with the injection still ignored 3/3 and the mock unchanged. A scorer note: citing an absence id is not citing a log line.
+- *Still weak, reported:* ambiguous incidents still get medium instead of low confidence from the live model, and it sometimes does not search for the right word.

@@ -6,7 +6,7 @@ What was measured, how, and what it does and does not show. All numbers below we
 ## 1. The seven required cases (offline, deterministic)
 
 `backend/tests/test_evaluation_cases.py` runs each case end to end through the HTTP API with the mock or a scripted
-provider, no network and no key. It passes as part of the 305-test backend suite (`pytest`).
+provider, no network and no key. It passes as part of the 335-test backend suite (`pytest`).
 
 | # | Case | Incident / provider | What is asserted |
 |---|---|---|---|
@@ -39,6 +39,10 @@ set AGENT_PROVIDER=openai & set OPENAI_MODEL=gpt-4.1-mini
 | Mock | 18/18 | 18/18 | 18/18 | 18/18 | 18/18 | 3/3 |
 | OpenAI `gpt-4.1-mini`, run 1 | 18/18 | 12/18* | 18/18 | 15/18 | 18/18 | 3/3 |
 | OpenAI `gpt-4.1-mini`, run 2 | 16/18 | 14/16 | 16/16 | 14/16 | 16/16 | 3/3 |
+| OpenAI `gpt-4.1-mini`, run 3 (after the Section 5 changes) | 18/18 | 18/18** | 18/18 | 16/18 | 18/18 | 3/3 |
+
+\*\* Run 3 scores citations of the new "no matches" ids (`logs:SERVICE:no-match:QUERY`) as absence, not as log lines;
+without that scorer fix INC-1004 read 0/3 because the model cited them. The two confidence misses are INC-1004 again.
 
 \* run 1 was scored against a stricter INC-1006 key that excluded the WARN backlog lines; the key was corrected afterwards
 because those lines are valid evidence. Run 2 uses the corrected key. Both runs are shown rather than only the better one.
@@ -65,9 +69,45 @@ the two 18-run passes.
   predicts performance on real telemetry.
 - Latency and token figures are for one model at one time.
 
-## 4. Browser end-to-end
+## 4. Real telemetry from the lab system (INC-2001 to INC-2003)
+
+Same agent, same tools, same validation, but over logs and metrics measured from a running lab system
+(docs/REAL_TELEMETRY.md). This is where the app first met data it was not written against, and it failed.
+
+| Attempt (live `gpt-4.1-mini`) | Completed | What happened |
+|---|---|---|
+| 1st, before any change | 1/3 | INC-2002 and INC-2003 hit `max_rounds_exceeded`: the model spent all 6 rounds on one more log search each and never answered |
+| 2nd, with a forced final round | 0/3 | All rejected as `ungrounded_evidence`: `search_logs("error")` matched nothing (real lines say `upstream timeout`, the word "error" is only the level), and the model then cited `none` for "no logs" |
+| 3rd, after the Section 5 changes, 3 runs each | **9/9** | See below |
+
+Outcome of the 9 runs (3 per incident): the expected action was proposed 7/9 (INC-2001 3/3, INC-2003 3/3, INC-2002
+1/3); the other two INC-2002 runs gave medium confidence and proposed nothing. 72,082 tokens in total, 7 to 11 s per run.
+INC-2002's runs found the cause through the deployment ("made the category filter case-insensitive") plus the latency
+metric, but never searched for the word that actually appears in its slow-query lines (`query`), so they cite no log
+line. That is a weak spot in the model's search, not something the app hides.
+
+Approving the proposed actions gave the measured outcomes: INC-2001 resolved (errors 0.0%, p99 47 ms), INC-2003 **not
+resolved** (backlog 712 against a threshold of 25: restarting workers does not fix a failing notifier).
+
+The capture itself has a guard: `lab.capture` refuses to write a dataset whose measured recovery contradicts the
+scenario. It fired once on an overloaded catalog scenario (a two-minute backlog after the fix), which led to resizing
+that scenario, and once on a run disturbed by other programs; both were rerun on an idle machine.
+
+## 5. Changes this exposed (all general, none specific to the lab data)
+
+1. **Forced final round.** The last allowed round offers no tools and tells the model to answer with the evidence it
+   has. A model that still asks for a tool fails as before; any answer is validated exactly as before.
+2. **`search_logs` also matches the level name**, so "error" and "warn" work the way people search logs.
+3. **Empty searches are citable absence** (`logs:SERVICE:no-match:QUERY`), the same design deployments already used.
+   The prompt now says so. A failed tool call still has no id.
+4. **The OpenAI request omits `tools`** when none are offered (the API rejects an empty list).
+Tests added for each (4 for the loop, 1 for the request, 2 for search); a mutation check confirmed that offering tools
+on the last round makes the loop test fail. The mock evaluation is unchanged (18/18 everywhere).
+
+## 6. Browser end-to-end
 
 `node scripts/e2e-ui.mjs` clicks through the real UI against the real API (investigate, approve, failed verification,
 reject, ambiguous incident, injection incident, unknown incident). Modes: default (mock), `--live`, `API_DOWN=1`,
-`GATED=<code>`. Passed 3 of 3 consecutive runs on a fresh database in mock mode, and once each in live, API-down and
-gated modes. One flaky check (a case-sensitive text match racing the timeline refresh) was found and fixed.
+`GATED=<code>`, and `CAPTURED=1` for the lab dataset. Passed 3 of 3 consecutive runs on a fresh database in mock mode, and
+once each in live, API-down, gated and captured modes (the captured run: 12 checks against the live model, including the
+real verification failure on INC-2003; the simulated flow was rerun after the loop changes: 28 checks). One flaky check (a case-sensitive text match racing the timeline refresh) was found and fixed.

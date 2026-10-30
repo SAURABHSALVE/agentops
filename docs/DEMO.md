@@ -28,6 +28,17 @@ Start two terminals: `cd backend && .venv\Scripts\python -m uvicorn app.main:app
 7. **Reject** on INC-1002: nothing runs; the rejection is on the timeline.
 8. **Persistence.** Stop and restart the backend, refresh: history, findings and approvals are still there (SQLite).
 
+## Real telemetry (optional, adds three incidents)
+Set `TELEMETRY_DATASET=data/captured/lab-capture.json` in `backend/.env` and restart the API; the header changes to
+"Telemetry captured from a lab system" and the dashboard lists INC-2001 to INC-2003 (docs/REAL_TELEMETRY.md).
+1. **INC-2001:** a dependency starts hanging. The investigation finds the real `upstream timeout calling payments-gateway`
+   lines; approving the action verifies recovery from measured numbers (0.0% errors, p99 back to about 45 ms).
+2. **INC-2002:** a "release" made a database filter case-insensitive, so the index stopped being used. The deploy
+   was minutes before the alert.
+3. **INC-2003:** the notifier returns 503. The restart *succeeds* but verification **fails** (queue still about 700):
+   the real backlog does not care that workers restarted.
+Screenshots: `docs/screenshots/captured-*.png`.
+
 ## Talking points
 - The model only proposes. The backend validates tool names and arguments, checks every cited evidence id against the
   tool results it recorded, resolves the remediation from its own allowlist, and requires a recorded human approval.

@@ -97,6 +97,7 @@ The server reads `backend/.env` (git-ignored; real environment variables win) or
 | `AGENT_PROVIDER` | `mock` | `mock` = offline, deterministic, no network; `openai` = live model |
 | `OPENAI_API_KEY` | none | Only read by `app/agent/factory.py`. Never sent to the browser, logged or committed |
 | `OPENAI_MODEL` | none | Required for `openai` (verified: `gpt-4.1-mini`) |
+| `TELEMETRY_DATASET` | none | Path to a captured dataset (e.g. `data/captured/lab-capture.json`); unset serves the simulated incidents. See [docs/REAL_TELEMETRY.md](docs/REAL_TELEMETRY.md) |
 | `STORAGE_MODE` | `local` | `local` = SQLite file in `LOCAL_DATA_DIR` (default `./.data`); `memory`; `dynamodb` (AWS only) |
 | `AGENT_MAX_ROUNDS`, `AGENT_MAX_TOTAL_TOKENS`, `TOOL_TIMEOUT_SECONDS`, `TOOL_RESULT_MAX_BYTES` | 6, 20000, 5, 16384 | Bounds on every run |
 
@@ -137,6 +138,9 @@ valid evidence, because they are. Run 1 scored 0/3 on that metric only because o
 5. For the live model: put `OPENAI_API_KEY=...` in `backend/.env`, start the API with `AGENT_PROVIDER=openai` and
    `OPENAI_MODEL=gpt-4.1-mini`. Live runs spend tokens; set a spend limit on the OpenAI project.
 6. Browser check: `node scripts/e2e-ui.mjs` (add `--live` when the API runs the OpenAI provider).
+7. Real telemetry: set `TELEMETRY_DATASET=data/captured/lab-capture.json` and restart the API for incidents **INC-2001 to
+   INC-2003**, whose logs and metrics were measured from a real running lab system (not production data). See
+   [docs/REAL_TELEMETRY.md](docs/REAL_TELEMETRY.md).
 
 ## Deploy to AWS
 
@@ -286,4 +290,4 @@ Stop both servers. Delete `backend/.data/` (the SQLite file), `backend/.venv/`, 
 OpenAI key** if it was ever pasted anywhere shared. No cloud resources exist unless you deployed them (see "Remove it").
 
 ## Docs
-[docs/EVALUATION.md](docs/EVALUATION.md) · [docs/DEMO.md](docs/DEMO.md) · [PLAN.md](PLAN.md) · [DECISIONS.md](DECISIONS.md) · [SECURITY.md](SECURITY.md) · build spec: `AgentOps_AI_Claude_Code_Build_Plan.md`
+[docs/EVALUATION.md](docs/EVALUATION.md) · [docs/DEMO.md](docs/DEMO.md) · [docs/REAL_TELEMETRY.md](docs/REAL_TELEMETRY.md) · [PLAN.md](PLAN.md) · [DECISIONS.md](DECISIONS.md) · [SECURITY.md](SECURITY.md) · build spec: `AgentOps_AI_Claude_Code_Build_Plan.md`
