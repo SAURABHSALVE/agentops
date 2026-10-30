@@ -98,3 +98,14 @@ jobs:
       # Every cdk-nag finding is an error under --strict unless it is acknowledged (with a reason) in nag.py.
       - run: npx cdk synth -c stage=dev -c alertEmail=ci@example.com --strict --quiet
       - run: npx cdk synth -c stage=prod -c alertEmail=ci@example.com --strict --quiet
+
+  scripts:
+    name: Shell scripts (shellcheck, teardown safety tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: shellcheck scripts/*.sh # preinstalled on GitHub's Ubuntu runners
+      - run: bash scripts/test_teardown.sh # uses a stub `aws`; never reaches AWS
