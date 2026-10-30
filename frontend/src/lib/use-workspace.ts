@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, api } from "./api";
+import { ApiError, api, type PublicConfig } from "./api";
 import type { Incident, Investigation, TimelineEvent } from "./types";
 
 const POLL_MS = 1000;
@@ -23,6 +23,8 @@ export function useWorkspace(incidentId: string) {
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [busy, setBusy] = useState<Busy>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [config, setConfig] = useState<PublicConfig | null>(null);
+  const [needsCode, setNeedsCode] = useState(false);
   const alive = useRef(true);
 
   useEffect(() => {
@@ -50,6 +52,15 @@ export function useWorkspace(incidentId: string) {
     const ctl = new AbortController();
     (async () => {
       try {
+        api
+          .config(ctl.signal)
+          .then((c) => {
+            if (!ctl.signal.aborted) {
+              setConfig(c);
+              if (c.write_access === "code_required") setNeedsCode(true);
+            }
+          })
+          .catch(() => undefined); // optional: the page works without it
         const [inc, tl] = await Promise.all([api.getIncident(incidentId, ctl.signal), api.getTimeline(incidentId, ctl.signal)]);
         let latest: Investigation | null = null;
         try {
@@ -107,7 +118,12 @@ export function useWorkspace(incidentId: string) {
         const next = await call();
         if (alive.current) setInvestigation(next);
       } catch (e) {
-        if (alive.current) setActionError(message(e));
+        if (alive.current) {
+          if (e instanceof ApiError && e.status === 401) {
+            setNeedsCode(true);
+            setActionError("An access code is required for this action. Enter it above, then try again.");
+          } else setActionError(message(e));
+        }
       } finally {
         if (alive.current) setBusy(null);
         await refreshAux();
@@ -124,6 +140,12 @@ export function useWorkspace(incidentId: string) {
     timeline,
     busy,
     actionError,
+    config,
+    needsCode,
+    codeAccepted: () => {
+      setNeedsCode(false);
+      setActionError(null);
+    },
     start: () => run("starting", () => api.startInvestigation(incidentId)),
     approve: () => investigation && run("approving", () => api.approve(investigation.id)),
     reject: () => investigation && run("rejecting", () => api.reject(investigation.id)),

@@ -122,6 +122,23 @@ try {
     await shot("api-down");
     throw new Error("__done__");
   }
+  if (process.env.GATED) {
+    // Run with the API started with ACCESS_CODE=<code>; pass the same value as GATED.
+    await goto("/incidents/INC-1001/");
+    check("access-code form is shown when the deployment needs one", await waitText("Access code (needed to run investigations"));
+    await clickButton("Investigate");
+    check("a write without the code is refused with a clear message", await waitText("An access code is required", 15000));
+    check("nothing was started", (await text()).includes("No investigation has been run"));
+    const filled = await evaluate(`(() => { const i=document.querySelector('input[type=password]'); const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; set.call(i, ${JSON.stringify(process.env.GATED)}); i.dispatchEvent(new Event('input',{bubbles:true})); return true; })()`);
+    check("code can be typed", filled);
+    await clickButton("Save");
+    await sleep(300);
+    await clickButton("Investigate");
+    check("with the code the investigation runs", await waitText("tool calls.", 60000));
+    check("approval works with the code", (await clickButton("Approve simulated action")) && (await waitText("Passed: incident resolved", 20000)));
+    await shot("gated");
+    throw new Error("__done__");
+  }
   // ---- dashboard -------------------------------------------------------------------------
   await goto("/");
   check("dashboard lists the incidents from the API", await waitText("Showing 6 of 6 simulated incidents"));

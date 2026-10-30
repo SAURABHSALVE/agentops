@@ -4,6 +4,7 @@ import Link from "next/link";
 import NotFound from "@/app/not-found";
 import { formatDateTime, formatWindow } from "@/lib/format";
 import { useWorkspace } from "@/lib/use-workspace";
+import { AccessCode } from "../AccessCode";
 import { SeverityBadge, StatusBadge } from "../badges";
 import { EvidencePanel } from "./EvidencePanel";
 import { InvestigationPanel } from "./InvestigationPanel";
@@ -70,6 +71,8 @@ export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
           ))}
         </dl>
       </header>
+
+      {w.needsCode && <AccessCode onSaved={w.codeAccepted} />}
 
       {w.actionError && (
         <p role="alert" className="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">

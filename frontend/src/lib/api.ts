@@ -8,6 +8,32 @@ export const API_BASE = (configured ?? (process.env.NODE_ENV === "development" ?
   "",
 );
 
+const ACCESS_KEY = "agentops-access-code";
+
+/** The access code lives only in this tab's sessionStorage (cleared when the tab closes). */
+export function getAccessCode(): string {
+  try {
+    return window.sessionStorage.getItem(ACCESS_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setAccessCode(code: string): void {
+  try {
+    if (code) window.sessionStorage.setItem(ACCESS_KEY, code);
+    else window.sessionStorage.removeItem(ACCESS_KEY);
+  } catch {
+    /* storage unavailable: the code simply is not remembered */
+  }
+}
+
+export interface PublicConfig {
+  data_mode: "simulated";
+  write_access: "open" | "code_required";
+  provider: { kind: "mock" | "openai"; label: string };
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -21,7 +47,10 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, { ...init, headers: { Accept: "application/json" } });
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const code = init?.method === "POST" ? getAccessCode() : "";
+    if (code) headers["X-Access-Code"] = code;
+    res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") throw e;
     throw new ApiError(
@@ -48,6 +77,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const enc = encodeURIComponent;
 
 export const api = {
+  config: (signal?: AbortSignal) => request<PublicConfig>("/api/config", { signal }),
   listIncidents: (signal?: AbortSignal) => request<IncidentSummary[]>("/api/incidents", { signal }),
   getIncident: (id: string, signal?: AbortSignal) => request<Incident>(`/api/incidents/${enc(id)}`, { signal }),
   getTimeline: (id: string, signal?: AbortSignal) =>
