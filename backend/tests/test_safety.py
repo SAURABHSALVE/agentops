@@ -12,10 +12,12 @@ from app.schemas import (
     IncidentSummary,
     SearchLogsArgs,
 )
+from app.simulator.captured import CapturedSource
 from app.simulator.fixtures import INCIDENTS
 from app.simulator.service import Simulator
 
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
+CAPTURED_DATASET = APP_DIR.parent / "data" / "captured" / "lab-capture.json"
 # `re.compile(` is legitimate; only the bare builtin compile() is forbidden.
 FORBIDDEN = re.compile(
     r"\b(subprocess|os\.system|os\.popen|os\.exec\w*|pty|ctypes|__import__)\b|\beval\(|\bexec\(|(?<![\w.])compile\("
@@ -83,6 +85,8 @@ def test_simulator_works_with_any_repository_implementing_the_protocol() -> None
 
 
 def test_frontend_static_export_lists_exactly_the_seeded_incidents() -> None:
-    """The static site enumerates incident pages at build time, so the two lists must not drift."""
+    """The static site enumerates incident pages at build time, so the two lists must not drift.
+    It covers the simulated incidents first, then the ones in the captured lab dataset."""
     text = (APP_DIR.parent.parent / "frontend" / "src" / "lib" / "incident-ids.ts").read_text(encoding="utf-8")
-    assert re.findall(r'"(INC-\d{4})"', text) == [i.id for i in INCIDENTS]
+    captured = [i.id for i in CapturedSource.load(CAPTURED_DATASET).incidents()]
+    assert re.findall(r'"(INC-\d{4})"', text) == [i.id for i in INCIDENTS] + captured

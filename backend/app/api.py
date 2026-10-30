@@ -61,15 +61,15 @@ def public_config(request: Request) -> dict[str, Any]:
     """What the UI needs to know up front. Contains nothing secret."""
     info = _investigations(request).provider_info
     return {
-        "data_mode": "simulated",
+        "data_mode": _sim(request).data_mode,
         "write_access": "code_required" if request.app.state.access.required else "open",
         "provider": {"kind": info.kind, "label": info.label},
     }
 
 
 @router.get("/health", response_model=HealthResponse, tags=["system"])
-def health() -> HealthResponse:
-    return HealthResponse(status="ok", data_mode="simulated", version=APP_VERSION)
+def health(request: Request) -> HealthResponse:
+    return HealthResponse(status="ok", data_mode=_sim(request).data_mode, version=APP_VERSION)
 
 
 @router.get("/api/incidents", response_model=list[IncidentSummary], tags=["incidents"])

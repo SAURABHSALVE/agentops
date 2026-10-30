@@ -62,6 +62,8 @@ class Settings:
     storage_mode: str = "local"
     dynamodb_table: str = ""
     local_data_dir: str = "./.data"
+    # Path to a dataset made by `python -m lab.capture`. Empty (default) serves the built-in simulated incidents.
+    telemetry_dataset: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -94,4 +96,5 @@ class Settings:
             storage_mode=storage_mode,
             dynamodb_table=table,
             local_data_dir=os.environ.get("LOCAL_DATA_DIR", "").strip() or cls.local_data_dir,
+            telemetry_dataset=os.environ.get("TELEMETRY_DATASET", "").strip(),
         )

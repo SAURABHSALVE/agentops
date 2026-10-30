@@ -28,7 +28,9 @@ from app.errors import (
 from app.repository import InMemoryIncidentRepository
 from app.schemas import ErrorDetail, ErrorResponse
 from app.security import ACCESS_HEADER, AccessGate, RateLimiter, load_access_code
+from app.simulator.captured import CapturedSource
 from app.simulator.service import Simulator
+from app.simulator.source import FixtureSource, TelemetrySource
 
 logger = logging.getLogger("agentops")
 
@@ -57,6 +59,13 @@ def _build_store(settings: Settings) -> InvestigationStore:
     return InMemoryInvestigationStore()
 
 
+def _build_simulator(settings: Settings) -> Simulator:
+    source: TelemetrySource = (
+        CapturedSource.load(Path(settings.telemetry_dataset)) if settings.telemetry_dataset else FixtureSource()
+    )
+    return Simulator(InMemoryIncidentRepository(source.incidents()), source)
+
+
 def create_app(
     simulator: Simulator | None = None,
     settings: Settings | None = None,
@@ -69,11 +78,11 @@ def create_app(
         title="AgentOps AI API",
         version=APP_VERSION,
         description=(
-            "Incident investigation backend. **All data served is simulated demo telemetry**, "
-            "not real production or CloudWatch data."
+            "Incident investigation backend. Data is either simulated demo telemetry (default) or telemetry "
+            "captured from a local lab system (`TELEMETRY_DATASET`). Neither is production or CloudWatch data."
         ),
     )
-    app.state.simulator = simulator or Simulator(InMemoryIncidentRepository())
+    app.state.simulator = simulator or _build_simulator(settings)
     app.state.investigations = InvestigationService(
         app.state.simulator, store or _build_store(settings), provider or build_provider(settings), settings
     )

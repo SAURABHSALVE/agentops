@@ -189,7 +189,7 @@ class VerificationResult(_Model):
 
 class HealthResponse(_Model):
     status: Literal["ok"]
-    data_mode: Literal["simulated"]
+    data_mode: Literal["simulated", "captured"]
     version: str
 
 
