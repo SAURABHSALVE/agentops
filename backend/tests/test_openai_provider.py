@@ -59,6 +59,15 @@ def provider(
     return OpenAIProvider(KEY, model, timeout_seconds=9, transport=t), t
 
 
+def test_a_request_with_no_tools_omits_the_tools_field_but_keeps_the_strict_answer_schema() -> None:
+    p, t = provider(reply({"content": "{}"}))
+    import dataclasses
+
+    p.complete(dataclasses.replace(request(), tools=()))
+    body = t.calls[0][2]
+    assert "tools" not in body and body["response_format"]["json_schema"]["strict"] is True
+
+
 def test_request_is_shaped_for_chat_completions_with_tools_strict_schema_and_bounds() -> None:
     p, t = provider(reply({"content": "{}"}))
     p.complete(request())

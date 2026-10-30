@@ -97,7 +97,7 @@ def test_ambiguous_incident_has_no_dominant_failure_pattern(sim: Simulator) -> N
     for pattern in ("timeout", "slow query", "503", "error"):
         res = sim.search_logs(SearchLogsArgs(incident_id="INC-1004", query=pattern))
         assert res.total_matches == 0, pattern
-        assert res.reference_ids == []
+        assert res.reference_ids == [f"logs:search-api:no-match:{pattern.replace(' ', '-')}"]  # citable absence
     warns = sim.search_logs(SearchLogsArgs(incident_id="INC-1004", query="a", level="WARN", limit=50))
     messages = [e.message for e in warns.entries]
     assert len(messages) >= 5

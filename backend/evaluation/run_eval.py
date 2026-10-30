@@ -35,12 +35,12 @@ def score(inv: dict, iid: str) -> dict[str, bool]:
     if not f:
         return out
     refs = {e["reference_id"] for e in f["evidence"]}
+    # "logs:SERVICE:no-match:QUERY" cites the absence of results; it is not a log line and is never a cause.
+    log_lines = {
+        e["reference_id"] for e in f["evidence"] if e["source"] == "logs" and e["reference_id"].startswith("log-")
+    }
     rem = f["remediation"]["action_id"] if f["remediation"] else None
-    out["cites_real_failure_log"] = (
-        bool(refs & gt.expected_log_ids)
-        if gt.expected_log_ids
-        else not any(e["source"] == "logs" for e in f["evidence"])
-    )
+    out["cites_real_failure_log"] = bool(refs & gt.expected_log_ids) if gt.expected_log_ids else not log_lines
     out["cites_expected_metric"] = any(r.startswith("metric:") for r in refs)
     out["confidence_within_cap"] = RANK[f["confidence"]] <= RANK[gt.max_confidence]
     out["right_remediation"] = rem == gt.expected_remediation
@@ -58,6 +58,7 @@ def main() -> int:
 
     client = TestClient(create_app())
     rows: list[tuple[str, dict[str, list[bool]], list[float], list[int]]] = []
+    failures: dict[str, dict[str, int]] = {}
     for incident in INCIDENTS:
         results: dict[str, list[bool]] = {}
         seconds: list[float] = []
@@ -68,6 +69,9 @@ def main() -> int:
             inv = client.get(f"/api/investigations/{started['id']}").json()
             seconds.append(time.time() - t0)
             tokens.append(inv["usage"]["input_tokens"] + inv["usage"]["output_tokens"])
+            if inv["status"] != "completed":
+                code = (inv.get("failure") or {}).get("code", "unknown")
+                failures.setdefault(incident.id, {})[code] = failures.get(incident.id, {}).get(code, 0) + 1
             for k, v in score(inv, incident.id).items():
                 results.setdefault(k, []).append(v)
         rows.append((incident.id, results, seconds, tokens))
@@ -81,6 +85,8 @@ def main() -> int:
         for k, v in results.items():
             totals.setdefault(k, []).extend(v)
     print("\nOverall:", "  ".join(f"{k}={sum(v)}/{len(v)}" for k, v in totals.items()))
+    if failures:
+        print("Failed runs:", "  ".join(f"{i}: {codes}" for i, codes in failures.items()))
     all_tokens = [t for _, _, _, ts in rows for t in ts]
     print(f"Total tokens across {len(all_tokens)} runs: {sum(all_tokens)}")
     return 0

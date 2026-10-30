@@ -179,3 +179,20 @@ def test_settings_select_the_dataset_and_a_bad_path_fails_at_startup() -> None:
     assert TestClient(app).get("/api/config").json()["data_mode"] == "captured"
     with pytest.raises(ConfigError):
         create_app(settings=dataclasses.replace(base, telemetry_dataset="does-not-exist.json"))
+
+
+# ---- search behaviour that real data exposed ------------------------------------------------------
+
+
+def test_a_level_name_matches_a_search_even_when_the_message_never_says_it(real_sim: Simulator) -> None:
+    """Real log lines say "upstream timeout...", not "error": the level field is where that word lives."""
+    by_message = real_sim.search_logs(SearchLogsArgs(incident_id="INC-2001", query="timeout", limit=50))
+    by_level = real_sim.search_logs(SearchLogsArgs(incident_id="INC-2001", query="error", limit=50))
+    assert by_level.total_matches >= by_message.total_matches > 0
+    assert all("error" not in e.message.lower() for e in by_level.entries)
+    assert {e.level for e in by_level.entries} == {"ERROR"}
+
+
+def test_an_empty_search_returns_a_citable_absence_id(real_sim: Simulator) -> None:
+    empty = real_sim.search_logs(SearchLogsArgs(incident_id="INC-2002", query="Out of Memory!", limit=5))
+    assert empty.total_matches == 0 and empty.reference_ids == ["logs:catalog-api:no-match:out-of-memory"]

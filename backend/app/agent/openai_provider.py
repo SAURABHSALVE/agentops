@@ -98,19 +98,20 @@ class OpenAIProvider:
         body: dict[str, Any] = {
             "model": self._model,
             "messages": [{"role": "system", "content": request.system}, *(_to_wire(m) for m in request.messages)],
-            "tools": [
-                {
-                    "type": "function",
-                    "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
-                }
-                for t in request.tools
-            ],
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {"name": "final_answer", "strict": True, "schema": request.answer_schema},
             },
             "max_completion_tokens": request.max_output_tokens,
         }
+        if request.tools:  # the API rejects an empty tools list; the final round offers none
+            body["tools"] = [
+                {
+                    "type": "function",
+                    "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
+                }
+                for t in request.tools
+            ]
         if not self._model.startswith(("gpt-5", "o1", "o3", "o4")):  # reasoning models reject temperature
             body["temperature"] = 0
         return body

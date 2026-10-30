@@ -31,7 +31,7 @@ from app.agent.models import (
     ToolCallRecord,
     Usage,
 )
-from app.agent.prompts import USER_PROMPT, encode_tool_result, system_prompt
+from app.agent.prompts import FINAL_ROUND_NOTICE, USER_PROMPT, encode_tool_result, system_prompt
 from app.agent.provider import (
     CompletionRequest,
     CompletionResponse,
@@ -172,14 +172,15 @@ class Coordinator:
                 status="failed", failure=Failure(code=code, message=FAILURE_MESSAGES[code]), finished_at=self._clock()
             )
 
-        for _ in range(limits.max_rounds):
+        for round_index in range(limits.max_rounds):
+            last_round = limits.max_rounds > 1 and round_index == limits.max_rounds - 1
             if tokens_in + tokens_out >= limits.max_total_tokens:
                 return fail("budget_exceeded")
             rounds += 1
             request = CompletionRequest(
                 system=system_prompt(),
-                messages=tuple(messages),
-                tools=tool_schemas(),
+                messages=(*messages, Message("user", FINAL_ROUND_NOTICE)) if last_round else tuple(messages),
+                tools=() if last_round else tool_schemas(),
                 answer_schema=answer_schema(),
                 max_output_tokens=limits.max_output_tokens,
             )
@@ -204,6 +205,9 @@ class Coordinator:
 
             if bool(response.tool_calls) == (response.final_text is not None):
                 return fail("invalid_output")  # neither, or both
+
+            if last_round and response.tool_calls:
+                return fail("max_rounds_exceeded")  # asked for tools that were not offered; none are run
 
             if response.final_text is not None:
                 try:

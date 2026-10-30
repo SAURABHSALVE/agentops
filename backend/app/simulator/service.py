@@ -5,6 +5,7 @@ call. They take already-validated *Args models, return bounded results, and atta
 `reference_ids` that are the only IDs a finding may cite as evidence.
 """
 
+import re
 from datetime import timedelta
 
 from app.errors import (
@@ -32,6 +33,11 @@ from app.simulator.source import DataMode, FixtureSource, TelemetrySource
 MAX_MESSAGE_CHARS = 300  # bound per-entry size: log text is untrusted and may be long
 
 
+def _no_match_id(service: str, query: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:40] or "query"
+    return f"logs:{service}:no-match:{slug}"
+
+
 class Simulator:
     def __init__(self, repo: IncidentRepository, source: TelemetrySource | None = None) -> None:
         self._repo = repo
@@ -57,7 +63,7 @@ class Simulator:
             e
             for e in self._source.logs(incident.id)
             if start <= e.timestamp <= incident.window_end
-            and needle in e.message.lower()
+            and (needle in e.message.lower() or needle == e.level.lower())
             and (args.level is None or e.level == args.level)
         ]
         entries = [e.model_copy(update={"message": e.message[:MAX_MESSAGE_CHARS]}) for e in matches[: args.limit]]
@@ -71,7 +77,8 @@ class Simulator:
             returned=len(entries),
             truncated=len(matches) > len(entries),
             entries=entries,
-            reference_ids=[e.id for e in entries],
+            # An empty search is itself evidence ("looked, found nothing") and gets a citable id, like deployments.
+            reference_ids=[e.id for e in entries] or [_no_match_id(incident.service, args.query)],
         )
 
     def get_service_metrics(self, args: GetMetricsArgs) -> MetricsResult:
