@@ -1,0 +1,18 @@
+# Weekly update PRs. Actions are pinned to commit SHAs, so Dependabot is what keeps them current.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly }
+  - package-ecosystem: npm
+    directory: /infra
+    schedule: { interval: weekly }
+  - package-ecosystem: pip
+    directory: /backend
+    schedule: { interval: weekly }
+  - package-ecosystem: pip
+    directory: /infra
+    schedule: { interval: weekly }
