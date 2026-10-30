@@ -8,7 +8,6 @@ call. They take already-validated *Args models, return bounded results, and atta
 from datetime import timedelta
 
 from app.errors import (
-    MetricNotAvailableError,
     RemediationNotApplicableError,
     UnknownRemediationError,
 )
@@ -24,19 +23,23 @@ from app.schemas import (
     LogSearchResult,
     MetricsResult,
     SearchLogsArgs,
-    VerificationCheck,
     VerificationResult,
 )
-from app.simulator import fixtures
-from app.simulator.metrics import LEAD, build_metrics_result, raw_value
+from app.simulator.metrics import LEAD
 from app.simulator.remediation import REMEDIATIONS
+from app.simulator.source import DataMode, FixtureSource, TelemetrySource
 
 MAX_MESSAGE_CHARS = 300  # bound per-entry size: log text is untrusted and may be long
 
 
 class Simulator:
-    def __init__(self, repo: IncidentRepository) -> None:
+    def __init__(self, repo: IncidentRepository, source: TelemetrySource | None = None) -> None:
         self._repo = repo
+        self._source: TelemetrySource = source or FixtureSource()
+
+    @property
+    def data_mode(self) -> DataMode:
+        return self._source.data_mode
 
     # ---- read-only diagnostic tools ----------------------------------------------------------
 
@@ -52,7 +55,7 @@ class Simulator:
         needle = args.query.lower()
         matches = [
             e
-            for e in fixtures.LOGS.get(incident.id, ())
+            for e in self._source.logs(incident.id)
             if start <= e.timestamp <= incident.window_end
             and needle in e.message.lower()
             and (args.level is None or e.level == args.level)
@@ -73,10 +76,7 @@ class Simulator:
 
     def get_service_metrics(self, args: GetMetricsArgs) -> MetricsResult:
         incident = self._repo.get_incident(args.incident_id)
-        spec = fixtures.METRICS.get((incident.id, args.metric))
-        if spec is None:
-            raise MetricNotAvailableError(f"Metric '{args.metric}' is not available for service '{incident.service}'.")
-        return build_metrics_result(incident, args.metric, spec)
+        return self._source.metrics(incident, args.metric)
 
     def get_recent_deployments(self, args: GetDeploymentsArgs) -> DeploymentsResult:
         incident = self._repo.get_incident(args.incident_id)
@@ -84,7 +84,7 @@ class Simulator:
         since = as_of - timedelta(hours=args.hours)
         found = [
             d
-            for d in fixtures.deployments_for(incident.service, incident.started_at)
+            for d in self._source.deployments(incident.service, incident.started_at)
             if since <= d.deployed_at <= as_of
         ]
         # An empty result is itself evidence ("no deployments"), so it gets a citable id.
@@ -126,24 +126,9 @@ class Simulator:
         """Check simulated metrics against thresholds. This is separate from action success:
         an action can succeed while verification still fails."""
         incident = self._repo.get_incident(incident_id)
-        specs = fixtures.VERIFICATION.get(incident.id, ())
-        if not specs:
-            return VerificationResult(incident_id=incident.id, status="not_verifiable", checks=[])
         applied = self._repo.get_applied_remediation(incident.id) is not None
-        checks: list[VerificationCheck] = []
-        for v in specs:
-            if applied:
-                observed = v.post_remediation_value
-            else:
-                observed = raw_value(fixtures.METRICS[(incident.id, v.metric)], incident.window_end)
-            checks.append(
-                VerificationCheck(
-                    metric=v.metric,
-                    observed=round(observed, 2),
-                    threshold=v.threshold,
-                    comparison="lt",
-                    passed=observed < v.threshold,
-                )
-            )
+        checks = self._source.verification(incident, applied)
+        if not checks:
+            return VerificationResult(incident_id=incident.id, status="not_verifiable", checks=[])
         status = "resolved" if all(c.passed for c in checks) else "not_resolved"
         return VerificationResult(incident_id=incident.id, status=status, checks=checks)

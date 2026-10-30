@@ -2,6 +2,7 @@
 implementation can be replaced (e.g. by DynamoDB in Phase 4) without touching the simulator."""
 
 import threading
+from collections.abc import Iterable
 from typing import Protocol
 
 from app.errors import IncidentNotFoundError
@@ -27,8 +28,8 @@ class IncidentRepository(Protocol):
 class InMemoryIncidentRepository:
     """Process-local store seeded from the deterministic fixtures. Lost on restart."""
 
-    def __init__(self) -> None:
-        self._incidents = {i.id: i for i in INCIDENTS}
+    def __init__(self, incidents: Iterable[IncidentDetail] | None = None) -> None:
+        self._incidents = {i.id: i for i in (INCIDENTS if incidents is None else incidents)}
         self._applied: dict[str, str] = {}
         self._lock = threading.Lock()
 
