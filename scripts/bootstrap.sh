@@ -7,6 +7,9 @@
 #
 #   aws login            # first, in your own terminal
 #   scripts/bootstrap.sh
+#
+# An account can have only one GitHub OIDC provider. If `aws iam list-open-id-connect-providers` already shows
+# token.actions.githubusercontent.com, reuse it:  OIDC_PROVIDER_ARN=arn:aws:iam::<acct>:oidc-provider/token.actions.githubusercontent.com scripts/bootstrap.sh
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,7 +36,9 @@ echo; echo "== cdk bootstrap =="
 npx cdk bootstrap "aws://$account/$AWS_REGION"
 
 echo; echo "== deploy AgentOps-GitHubOidc (creates IAM roles: CDK will ask you to confirm) =="
-npx cdk deploy AgentOps-GitHubOidc --outputs-file "$root/cdk-oidc-outputs.json"
+reuse=()
+[ -z "${OIDC_PROVIDER_ARN:-}" ] || reuse=(-c "existingOidcProviderArn=$OIDC_PROVIDER_ARN")
+npx cdk deploy AgentOps-GitHubOidc "${reuse[@]}" --outputs-file "$root/cdk-oidc-outputs.json"
 
 deploy_arn="$(python -c "import json; print(json.load(open('$root/cdk-oidc-outputs.json'))['AgentOps-GitHubOidc']['DeployRoleArn'])")"
 diff_arn="$(python -c "import json; print(json.load(open('$root/cdk-oidc-outputs.json'))['AgentOps-GitHubOidc']['DiffRoleArn'])")"
