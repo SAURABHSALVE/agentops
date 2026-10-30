@@ -1,17 +1,19 @@
 """Wires the simulator, a provider and the store together for the API."""
 
 import logging
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 
 from app.agent.coordinator import FAILURE_MESSAGES, Coordinator, Limits
-from app.agent.models import Failure, Investigation
+from app.agent.models import Failure, Investigation, RemediationRecord
 from app.agent.provider import LLMProvider
 from app.agent.store import InvestigationStore
+from app.agent.timeline import effective_status, events_for
 from app.agent.tools import ToolRunner
 from app.config import Settings
-from app.errors import InvestigationNotFoundError
-from app.schemas import GetIncidentArgs
+from app.errors import AgentOpsError, InvestigationNotFoundError, RemediationStateError
+from app.schemas import GetIncidentArgs, IncidentDetail, IncidentSummary, TimelineEvent
 from app.simulator.service import Simulator
 
 logger = logging.getLogger("agentops.agent")
@@ -34,6 +36,7 @@ class InvestigationService:
         self._store = store
         self._provider = provider
         self._clock = clock
+        self._approval_lock = threading.Lock()  # approvals are rare; serialising them makes "runs once" simple
         runner = ToolRunner(
             simulator,
             timeout_seconds=settings.tool_timeout_seconds,
@@ -79,3 +82,86 @@ class InvestigationService:
         if found is None:
             raise InvestigationNotFoundError("No investigation has been run for this incident.")
         return found
+
+    # ---- incident views --------------------------------------------------------------------
+
+    def with_status(self, incident: IncidentSummary) -> IncidentSummary:
+        """The incident with its status reflecting the newest investigation (investigating / resolved)."""
+        status = effective_status(incident.status, self._store.latest_for(incident.id))
+        return incident.model_copy(update={"status": status}) if status != incident.status else incident
+
+    def with_status_detail(self, incident: IncidentDetail) -> IncidentDetail:
+        status = effective_status(incident.status, self._store.latest_for(incident.id))
+        return incident.model_copy(update={"status": status}) if status != incident.status else incident
+
+    def timeline(self, incident_id: str) -> list[TimelineEvent]:
+        incident = self._sim.get_incident(GetIncidentArgs(incident_id=incident_id))
+        derived = [e for inv in self._store.list_for_incident(incident_id) for e in events_for(inv)]
+        # Stable sort: the fixture history first at equal timestamps, then investigation order.
+        return sorted([*incident.history, *derived], key=lambda e: e.at)
+
+    # ---- approval gate (Phase 5) -----------------------------------------------------------
+
+    def approve(self, investigation_id: str) -> Investigation:
+        """Run the proposed simulated action and verify it, exactly once.
+
+        The action id is read from this investigation's validated findings; the client supplies
+        nothing. Repeating an approval returns the recorded outcome and runs nothing.
+        """
+        with self._approval_lock:
+            inv, record = self._decidable(investigation_id)
+            if record.status != "proposed":
+                if record.status == "rejected":
+                    raise RemediationStateError("This remediation was rejected and cannot be approved.")
+                return inv  # duplicate approval: already executing or finished
+            latest = self._store.latest_for(inv.incident_id)
+            if latest is not None and latest.id != inv.id:
+                raise RemediationStateError("A newer investigation exists; approve from the latest one.")
+
+            inv = self._save_state(inv, record.model_copy(update={"status": "executing", "decided_at": self._clock()}))
+            running = inv.remediation_state
+            assert running is not None  # noqa: S101  (just set)
+            record = running
+            try:
+                action = self._sim.execute_remediation(inv.incident_id, record.action_id)
+                executed_at = self._clock()
+                record = record.model_copy(update={"action": action, "executed_at": executed_at})
+                verification = self._sim.verify_resolution(inv.incident_id)
+                record = record.model_copy(
+                    update={"verification": verification, "verified_at": self._clock(), "status": verification.status}
+                )
+            except AgentOpsError as exc:
+                logger.error("remediation %s failed: %s", investigation_id, exc.code)
+                record = record.model_copy(
+                    update={"status": "action_failed", "executed_at": self._clock(), "error": exc.message}
+                )
+            except Exception as exc:
+                logger.error("remediation %s crashed: %s", investigation_id, type(exc).__name__)
+                record = record.model_copy(
+                    update={
+                        "status": "action_failed",
+                        "executed_at": self._clock(),
+                        "error": "The simulated action failed unexpectedly.",
+                    }
+                )
+            return self._save_state(inv, record)
+
+    def reject(self, investigation_id: str) -> Investigation:
+        with self._approval_lock:
+            inv, record = self._decidable(investigation_id)
+            if record.status == "rejected":
+                return inv
+            if record.status != "proposed":
+                raise RemediationStateError("This remediation was already approved and cannot be rejected.")
+            return self._save_state(inv, record.model_copy(update={"status": "rejected", "decided_at": self._clock()}))
+
+    def _decidable(self, investigation_id: str) -> tuple[Investigation, RemediationRecord]:
+        inv = self._store.get(investigation_id)
+        if inv.status != "completed" or inv.remediation_state is None or inv.findings is None:
+            raise RemediationStateError("This investigation has no remediation awaiting a decision.")
+        return inv, inv.remediation_state
+
+    def _save_state(self, inv: Investigation, record: RemediationRecord) -> Investigation:
+        updated = inv.model_copy(update={"remediation_state": record})
+        self._store.save(updated)
+        return updated

@@ -1,22 +1,26 @@
 import logging
+import os
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.agent.mock_provider import MockProvider
+from app.agent.factory import build_provider
 from app.agent.provider import LLMProvider
 from app.agent.service import InvestigationService
+from app.agent.sqlite_store import SqliteInvestigationStore
 from app.agent.store import InMemoryInvestigationStore, InvestigationStore
 from app.api import router
-from app.config import APP_VERSION, Settings
+from app.config import APP_VERSION, Settings, load_env_file
 from app.errors import (
     AgentOpsError,
     IncidentNotFoundError,
     InvestigationInProgressError,
     InvestigationNotFoundError,
     MetricNotAvailableError,
+    RemediationStateError,
 )
 from app.repository import InMemoryIncidentRepository
 from app.schemas import ErrorDetail, ErrorResponse
@@ -29,6 +33,7 @@ _STATUS_BY_CODE = {
     MetricNotAvailableError.code: 404,
     InvestigationNotFoundError.code: 404,
     InvestigationInProgressError.code: 409,
+    RemediationStateError.code: 409,
 }
 
 
@@ -41,6 +46,8 @@ def _build_store(settings: Settings) -> InvestigationStore:
         from app.agent.dynamodb_store import DynamoDbInvestigationStore  # keeps boto3 optional locally
 
         return DynamoDbInvestigationStore.for_table(settings.dynamodb_table)
+    if settings.storage_mode == "local":
+        return SqliteInvestigationStore(Path(settings.local_data_dir) / "agentops.sqlite3")
     return InMemoryInvestigationStore()
 
 
@@ -61,7 +68,7 @@ def create_app(
     )
     app.state.simulator = simulator or Simulator(InMemoryIncidentRepository())
     app.state.investigations = InvestigationService(
-        app.state.simulator, store or _build_store(settings), provider or MockProvider(), settings
+        app.state.simulator, store or _build_store(settings), provider or build_provider(settings), settings
     )
 
     app.add_middleware(
@@ -93,4 +100,6 @@ def create_app(
     return app
 
 
+if not os.environ.get("AGENTOPS_NO_DOTENV"):  # tests set this so a real key is never picked up
+    load_env_file(Path(__file__).resolve().parent.parent / ".env")
 app = create_app()

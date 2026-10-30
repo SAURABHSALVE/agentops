@@ -124,6 +124,11 @@ class DynamoDbInvestigationStore:
         except InvestigationNotFoundError:
             return None  # the record aged out via TTL before its pointer did
 
+    def list_for_incident(self, incident_id: str) -> list[Investigation]:
+        # The single-table design has no per-incident index, so the timeline shows the newest run only.
+        latest = self.latest_for(incident_id)
+        return [latest] if latest else []
+
     # ---- internals -------------------------------------------------------------------------
 
     def _expiry(self) -> int:

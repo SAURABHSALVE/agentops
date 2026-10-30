@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -26,10 +27,11 @@ from app.agent.models import (
     Findings,
     Investigation,
     Remediation,
+    RemediationRecord,
     ToolCallRecord,
     Usage,
 )
-from app.agent.prompts import SYSTEM_PROMPT, USER_PROMPT, encode_tool_result
+from app.agent.prompts import USER_PROMPT, encode_tool_result, system_prompt
 from app.agent.provider import (
     CompletionRequest,
     CompletionResponse,
@@ -67,6 +69,17 @@ class Limits:
     max_output_tokens: int
     max_tool_calls: int = 12
     max_calls_per_round: int = 6
+
+
+def answer_schema() -> dict[str, Any]:
+    """FinalAnswer's JSON Schema with remediation_action_id narrowed to the real allowlist (or null).
+    This only guides a model; validate_answer still enforces it."""
+    schema = FinalAnswer.model_json_schema()
+    schema["properties"]["remediation_action_id"] = {
+        "anyOf": [{"type": "string", "enum": sorted(REMEDIATIONS)}, {"type": "null"}],
+        "title": "Remediation Action Id",
+    }
+    return schema
 
 
 class _Reject(Exception):
@@ -164,10 +177,10 @@ class Coordinator:
                 return fail("budget_exceeded")
             rounds += 1
             request = CompletionRequest(
-                system=SYSTEM_PROMPT,
+                system=system_prompt(),
                 messages=tuple(messages),
                 tools=tool_schemas(),
-                answer_schema=FinalAnswer.model_json_schema(),
+                answer_schema=answer_schema(),
                 max_output_tokens=limits.max_output_tokens,
             )
             started = time.perf_counter()
@@ -197,7 +210,10 @@ class Coordinator:
                     findings = validate_answer(response.final_text, grounded, service)
                 except _Reject as rejected:
                     return fail(rejected.code)
-                return snapshot(status="completed", findings=findings, finished_at=self._clock())
+                state = RemediationRecord(action_id=findings.remediation.action_id) if findings.remediation else None
+                return snapshot(
+                    status="completed", findings=findings, remediation_state=state, finished_at=self._clock()
+                )
 
             calls = _normalise_ids(response.tool_calls, len(records))
             messages.append(Message("assistant", tool_calls=calls))

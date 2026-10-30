@@ -1,7 +1,7 @@
-"""HTTP routes: read-only incidents and simulated diagnostics, plus investigations (Phase 3A).
+"""HTTP routes: incidents, simulated diagnostics, investigations and the approval gate.
 
-Starting an investigation is the only write. Remediation execution is intentionally NOT exposed
-yet: it needs the Phase 5 approval gate.
+Writes: start an investigation, and approve or reject the remediation it proposed. Neither takes a
+request body, so a client cannot choose an action, a tool or an incident beyond the path ids.
 """
 
 from typing import Annotated, Any
@@ -26,6 +26,7 @@ from app.schemas import (
     MetricsQuery,
     MetricsResult,
     SearchLogsArgs,
+    TimelineEvent,
 )
 from app.simulator.service import Simulator
 
@@ -56,7 +57,8 @@ def health() -> HealthResponse:
 
 @router.get("/api/incidents", response_model=list[IncidentSummary], tags=["incidents"])
 def list_incidents(request: Request) -> list[IncidentSummary]:
-    return _sim(request).list_incidents()
+    svc = _investigations(request)
+    return [svc.with_status(i) for i in _sim(request).list_incidents()]
 
 
 @router.get(
@@ -66,7 +68,19 @@ def list_incidents(request: Request) -> list[IncidentSummary]:
     tags=["incidents"],
 )
 def get_incident(incident_id: IncidentIdPath, request: Request) -> IncidentDetail:
-    return _sim(request).get_incident(GetIncidentArgs(incident_id=incident_id))
+    incident = _sim(request).get_incident(GetIncidentArgs(incident_id=incident_id))
+    return _investigations(request).with_status_detail(incident)
+
+
+@router.get(
+    "/api/incidents/{incident_id}/timeline",
+    response_model=list[TimelineEvent],
+    responses=_ERRORS,
+    tags=["incidents"],
+)
+def get_timeline(incident_id: IncidentIdPath, request: Request) -> list[TimelineEvent]:
+    """Fixture history plus every recorded investigation, tool call, approval, action and verification."""
+    return _investigations(request).timeline(incident_id)
 
 
 @router.get(
@@ -137,3 +151,28 @@ def latest_investigation(incident_id: IncidentIdPath, request: Request) -> Inves
 )
 def get_investigation(investigation_id: InvestigationIdPath, request: Request) -> Investigation:
     return _investigations(request).get(investigation_id)
+
+
+@router.post(
+    "/api/investigations/{investigation_id}/remediation/approve",
+    response_model=Investigation,
+    responses=_START_ERRORS,
+    tags=["approval"],
+)
+def approve_remediation(investigation_id: InvestigationIdPath, request: Request) -> Investigation:
+    """Approve the remediation proposed by this investigation, run it (simulated) and verify it.
+
+    Takes no body: the action is the one the server validated and stored. Repeating this call
+    returns the recorded outcome and does not run the action again.
+    """
+    return _investigations(request).approve(investigation_id)
+
+
+@router.post(
+    "/api/investigations/{investigation_id}/remediation/reject",
+    response_model=Investigation,
+    responses=_START_ERRORS,
+    tags=["approval"],
+)
+def reject_remediation(investigation_id: InvestigationIdPath, request: Request) -> Investigation:
+    return _investigations(request).reject(investigation_id)

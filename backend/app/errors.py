@@ -38,3 +38,9 @@ class ProviderError(Exception):
 
 class TransientProviderError(ProviderError):
     """A provider failure that is safe to retry once (timeout, rate limit, 5xx). Tools are read-only."""
+
+
+class RemediationStateError(AgentOpsError):
+    """The requested approval transition is not valid from the current state."""
+
+    code = "invalid_remediation_state"
