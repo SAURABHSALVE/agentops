@@ -3,3 +3,5 @@
 fastapi==0.162.0
 uvicorn==0.54.0
 pydantic==2.14.1
+mangum==0.22.0          # Lambda adapter (MIT); only app/lambda_handler.py imports it
+boto3==1.43.122         # DynamoDB store; Lambda provides its own copy at runtime

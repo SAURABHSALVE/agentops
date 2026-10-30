@@ -1,0 +1,5 @@
+# Runtime packages bundled into the Lambda deployment (boto3 is provided by the Lambda runtime;
+# uvicorn is for local runs only). Pinned to the versions the tests ran against.
+fastapi==0.162.0
+pydantic==2.14.1
+mangum==0.22.0

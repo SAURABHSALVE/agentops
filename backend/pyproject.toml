@@ -30,3 +30,7 @@ select = ["E", "F", "I", "B", "UP", "S"]
 strict = true
 plugins = ["pydantic.mypy"]
 files = ["app", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["boto3.*", "botocore.*", "moto.*", "mangum.*"]
+ignore_missing_imports = true

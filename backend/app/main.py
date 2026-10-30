@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from app.agent.mock_provider import MockProvider
 from app.agent.provider import LLMProvider
 from app.agent.service import InvestigationService
-from app.agent.store import InMemoryInvestigationStore
+from app.agent.store import InMemoryInvestigationStore, InvestigationStore
 from app.api import router
 from app.config import APP_VERSION, Settings
 from app.errors import (
@@ -36,10 +36,19 @@ def _envelope(status: int, detail: ErrorDetail) -> JSONResponse:
     return JSONResponse(status_code=status, content=ErrorResponse(error=detail).model_dump(exclude_none=True))
 
 
+def _build_store(settings: Settings) -> InvestigationStore:
+    if settings.storage_mode == "dynamodb":
+        from app.agent.dynamodb_store import DynamoDbInvestigationStore  # keeps boto3 optional locally
+
+        return DynamoDbInvestigationStore.for_table(settings.dynamodb_table)
+    return InMemoryInvestigationStore()
+
+
 def create_app(
     simulator: Simulator | None = None,
     settings: Settings | None = None,
     provider: LLMProvider | None = None,
+    store: InvestigationStore | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
@@ -52,7 +61,7 @@ def create_app(
     )
     app.state.simulator = simulator or Simulator(InMemoryIncidentRepository())
     app.state.investigations = InvestigationService(
-        app.state.simulator, InMemoryInvestigationStore(), provider or MockProvider(), settings
+        app.state.simulator, store or _build_store(settings), provider or MockProvider(), settings
     )
 
     app.add_middleware(
