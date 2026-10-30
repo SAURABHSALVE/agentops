@@ -112,6 +112,16 @@ async function shot(name) {
 }
 
 try {
+  if (process.env.API_DOWN) {
+    // Run with the API stopped: the UI must say so plainly instead of showing a blank or broken page.
+    await goto("/");
+    check("dashboard explains that the API is unreachable", await waitText("Could not load incidents", 15000));
+    check("it names the likely cause and offers a retry", (await text()).includes("Is the backend running?") && (await text()).includes("Try again"));
+    await goto("/incidents/INC-1001/");
+    check("incident page shows a clear error", await waitText("Could not load this incident", 15000));
+    await shot("api-down");
+    throw new Error("__done__");
+  }
   // ---- dashboard -------------------------------------------------------------------------
   await goto("/");
   check("dashboard lists the incidents from the API", await waitText("Showing 6 of 6 simulated incidents"));
@@ -193,8 +203,10 @@ try {
   t = await text();
   check("unknown incident shows not-found, not a crash", /not found|404/i.test(t));
 } catch (e) {
-  console.log("ERROR", e.message);
-  failures++;
+  if (e.message !== "__done__") {
+    console.log("ERROR", e.message);
+    failures++;
+  }
 } finally {
   cdp.close();
   proc.kill();

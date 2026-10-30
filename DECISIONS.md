@@ -84,7 +84,8 @@ One `LLMProvider` interface with a single `complete(...)` call; implementations 
 4. **The stale Bedrock UI copy** in `frontend/src/app/page.tsx` is corrected in the next relevant frontend change (3A, when the UI is wired to the API), not as a separate edit.
 5. **Bedrock, AgentCore and AWS resource creation stay out of scope** until explicitly approved. AWS deployment is evaluated in Phase 6 using least-privilege credentials. This reaffirms D-018 and D-020.
 
-**D-022 · OPEN · Remaining Phase 3/5/6 questions.**
+**D-022 · (a) resolved 2026-10-30, (b) still open · Remaining Phase 3/5/6 questions.**
+(a) RESOLVED: new incidents, not variants. INC-1005 (prompt injection) and INC-1006 (action succeeds, verification fails) were added; INC-1001 to INC-1004 are unchanged. The user did not name a choice and asked to proceed, so the recommended option was used.
 (a) New fixtures are needed without altering INC-1001 to INC-1004 expectations: a prompt-injection log (3A) and a remediation-succeeds-but-verification-fails scenario (Phase 5). Decide whether these are new incidents (for example INC-1005/INC-1006) or variants of existing ones. (b) Public-demo access control for Phase 6 (allow-list or password, versus demoing locally only).
 
 **D-023 · accepted (user, 2026-10-30) · AWS hosting: static site on S3 + CloudFront, API on Lambda + API Gateway HTTP API, investigation state in DynamoDB. Infrastructure as Python CDK in `infra/`.**
@@ -97,3 +98,18 @@ One `LLMProvider` interface with a single `complete(...)` call; implementations 
 
 **D-024 · accepted (user, 2026-10-30) · Frontend is a Next.js static export; Cache Components and partial prefetching are switched off. Amends D-011.**
 `output: "export"` with `trailingSlash: true` produces plain files for S3 + CloudFront. Next.js 16.4.3 refuses the export while `cacheComponents` and `partialPrefetching` are on ("PPR cannot be enabled in export mode"). Nothing in `src/` used a caching API (they were `create-next-app` defaults), so they were removed. Consequences: unknown incident IDs now get a real 404 from the CDN instead of a streamed 200 (the D-011 caveat goes away); `generateStaticParams` still enumerates the four simulated incidents. If a route later needs request-time rendering, this decision must be revisited (Amplify Hosting or a server). `npm run typecheck` runs `next typegen` first because `PageProps`/`LayoutProps` are generated types, so a clean checkout cannot run bare `tsc`.
+
+**D-025 · accepted (user, 2026-10-30) · Phases 3A to 5 built together; AWS deployment paused. The app must work fully locally.**
+The user asked to complete the phases through 5 and test the whole app locally, with AWS only for later deployment. The AWS code (D-023, D-024) is left as is and was not touched or deployed.
+
+**D-026 · accepted · OpenAI provider uses Chat Completions over the standard library, no SDK.**
+- *Why:* the official docs site could not be fetched here, so request and response shapes (tool_calls with JSON-string arguments, strict `json_schema` response format, `usage`) were verified against the live API with the user's key. Zero new dependencies keeps the supply chain and Lambda package small. The endpoint is a fixed constant, so configuration cannot redirect the key.
+- *Model:* `gpt-4.1-mini`, chosen from the account's model list for low cost and plain function-calling semantics. It comes from `OPENAI_MODEL`, never hard-coded.
+- *Trade-offs:* we own the wire format and must re-verify it if the API changes (covered by offline contract tests with a fake transport). Provider error bodies are deliberately never surfaced, because they can echo parts of the key.
+- *Prompt:* the model is shown the real remediation allowlist (and the schema narrows `remediation_action_id` to it) because without it the live model invented action ids and was correctly rejected by the backend.
+
+**D-027 · accepted · Approval gate and persistence design.**
+- Approve and reject take no request body; the action id is read from the validated findings stored server-side, so a client cannot choose an action. Approval runs the simulated action once under a lock, then verification as a separate state (`resolved`, `not_resolved`, `not_verifiable`); repeated approvals return the recorded outcome. Only the newest investigation of an incident can be approved.
+- Local persistence is one SQLite file (standard library). `create` runs in an IMMEDIATE transaction so one running investigation per incident is atomic; runs interrupted by a restart are marked failed at start-up.
+- The timeline is derived from recorded investigation data instead of a separate event table, so it cannot disagree with the records and works with any store. The DynamoDB store shows only the newest run (no per-incident index).
+- Rejected: a client-supplied action id; a separate mutable event log.

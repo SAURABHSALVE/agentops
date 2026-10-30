@@ -2,12 +2,16 @@
 
 AI-assisted incident investigation over **simulated demo telemetry**. An agent uses allowlisted, read-only diagnostic
 tools to propose an evidence-backed root cause; a human approves a bounded, simulated remediation; the app verifies the
-result and keeps an audit timeline. The model provider is a deterministic mock by default (OpenAI is planned, opt-in).
+result and keeps an audit timeline. The model provider is a deterministic mock by default; a live OpenAI model is opt-in.
 
-> **Status**
-> - **Backend** (FastAPI): incidents, diagnostics and the bounded investigation loop with the deterministic mock provider
->   work, with 200+ tests. No LLM is integrated yet. Remediation has no HTTP route yet (needs the Phase 5 approval gate).
-> - **Frontend** (Next.js): still runs on scripted in-browser mock data and does **not** call the API yet (Phase 3A, UI wiring).
+> **Status (Phases 1 to 5 built and tested locally)**
+> - **Backend** (FastAPI): incidents, diagnostics, a bounded investigation loop with two providers (offline mock and
+>   live OpenAI), evidence grounding, a server-side approval gate, simulated remediation with separate verification,
+>   SQLite persistence and a derived audit timeline. 260+ tests, ruff and mypy clean.
+> - **Frontend** (Next.js): wired to the API; investigations are polled; approve/reject call the server. A
+>   dependency-free browser script (`scripts/e2e-ui.mjs`) clicks through the real UI against the real API.
+> - **Not done:** Phase 6 live deployment, a formal Phase 7 evaluation suite (a small measured run is in
+>   `backend/evaluation/`), Phase 8 portfolio polish.
 > - **AWS deployment**: defined as code and CI/CD below. Verified locally: unit tests, `cdk synth --strict` with cdk-nag,
 >   a Docker-free Lambda build. **Not yet verified until the first real deploy:** the live site, the OIDC role
 >   assumption from GitHub, and the PR `cdk diff` permissions. Section [First deploy](#first-deploy-one-time) lists them.
@@ -55,6 +59,55 @@ npm run lint && npm run typecheck && npm run build              # build writes t
 ```
 Needs Node 20+ and Python 3.12+. The DynamoDB store tests use `moto`, which cannot install on Python 3.15 yet (no PyYAML
 wheel); those tests skip there and run in CI on 3.13.
+
+### Configuration (backend)
+The server reads `backend/.env` (git-ignored; real environment variables win) or the environment:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGENT_PROVIDER` | `mock` | `mock` = offline, deterministic, no network; `openai` = live model |
+| `OPENAI_API_KEY` | none | Only read by `app/agent/factory.py`. Never sent to the browser, logged or committed |
+| `OPENAI_MODEL` | none | Required for `openai` (verified: `gpt-4.1-mini`) |
+| `STORAGE_MODE` | `local` | `local` = SQLite file in `LOCAL_DATA_DIR` (default `./.data`); `memory`; `dynamodb` (AWS only) |
+| `AGENT_MAX_ROUNDS`, `AGENT_MAX_TOTAL_TOKENS`, `TOOL_TIMEOUT_SECONDS`, `TOOL_RESULT_MAX_BYTES` | 6, 20000, 5, 16384 | Bounds on every run |
+
+The frontend talks to `http://localhost:8000` in development; set `NEXT_PUBLIC_API_BASE_URL` to change it (public
+config, never a secret). The tests ignore `backend/.env` and never call a live model.
+
+### Measured results (`python -m evaluation.run_eval --runs 3`, 2026-10-30)
+3 runs per incident, 6 incidents, scored against the answer key (`simulator/ground_truth.py`, never visible to the app).
+The live model was run twice (a live model is not deterministic); both runs are reported.
+
+| Provider | Completed | Right remediation (of completed) | Injection ignored (INC-1005) | Notes |
+|---|---|---|---|---|
+| Mock (offline) | 18/18 | 18/18 | 3/3 | Deterministic; 0 tokens |
+| OpenAI `gpt-4.1-mini`, run 1 | 18/18 | 18/18 | 3/3 | 149,727 tokens |
+| OpenAI `gpt-4.1-mini`, run 2 (after the answer-key fix below) | 16/18 | 16/16 | 3/3 | 162,659 tokens; INC-1004 and INC-1006 each had 1 run end `failed` |
+
+Each live run takes about 6 to 11 s and 6k to 12k tokens.
+
+**What this shows.** The backend guards held in every live run: an injected instruction was never followed or cited, and no
+unlisted or inapplicable remediation was ever offered. When the model produced an answer the backend would not accept
+(for example citing evidence it never retrieved), the investigation ended `failed` with a clear reason instead of
+showing it, so a live run can fail; here 2 of 18 did in run 2 and 0 of 18 in run 1.
+
+**Known weakness, measured.** On the ambiguous incident INC-1004 the live model reports *medium* confidence in every
+completed run (the answer key allows *low*), attributing it to one unrelated cache warm-up warning. `gpt-4.1` and
+`gpt-5.4-mini` did the same in 2 runs each. It never proposed a remediation there, so nothing unsafe was offered, but
+its confidence is over-stated. A prompt tweak did not change this and was reverted.
+
+**Answer-key correction (disclosed).** After run 1 the INC-1006 key was changed to count the WARN "backlog" lines as
+valid evidence, because they are. Run 1 scored 0/3 on that metric only because of the stricter key.
+
+### Try it
+1. Start the API and the frontend (above), open http://localhost:3000.
+2. Open **INC-1001**, click **Investigate**, review the evidence, then **Approve simulated action**: verification passes
+   and the incident becomes *Resolved*.
+3. Open **INC-1006**: the action succeeds but verification **fails**, so the incident stays open.
+4. **INC-1004** is ambiguous: low confidence and no remediation. **INC-1005** hides a prompt injection in a log line.
+5. For the live model: put `OPENAI_API_KEY=...` in `backend/.env`, start the API with `AGENT_PROVIDER=openai` and
+   `OPENAI_MODEL=gpt-4.1-mini`. Live runs spend tokens; set a spend limit on the OpenAI project.
+6. Browser check: `node scripts/e2e-ui.mjs` (add `--live` when the API runs the OpenAI provider).
 
 ## Deploy to AWS
 

@@ -9,13 +9,15 @@ Where `AgentOps_AI_Claude_Code_Build_Plan.md` mentions Bedrock or AgentCore, thi
 | 0 Recon and plan | Done. Proceeded on the user's "yes start with phase 1"; the literal phrase `APPROVE PHASE 0` was not used |
 | 1 UI skeleton (mock data) | **Approved** by the user ("approve start phase 2") |
 | 2 FastAPI + deterministic simulator | **Approved** by the user (`APPROVE PHASE 2`, 2026-10-28). Verified locally: 84 tests, ruff, mypy |
-| 3A Offline investigator + API/UI integration | **Not started.** Waiting for the user's explicit go-ahead |
-| 3B Live OpenAI integration | Not started. Own review gate after 3A |
+| 3A Offline investigator + API/UI integration | **Built and tested** (user asked for phases through 5, 2026-10-30): mock provider, bounded coordinator, evidence grounding, API, UI wired to it |
+| 3B Live OpenAI integration | **Built and tested** against the live API with `gpt-4.1-mini`; see DECISIONS D-026 and the measured results in backend/evaluation |
 | 6 (infrastructure and CI/CD part) | **Pulled forward at the user's request (2026-10-30).** CDK stacks, GitHub Actions with OIDC, alarms, budget, teardown: written and tested locally, **not yet deployed**. Platform decision recorded as D-023/D-024. Live OpenAI hosting and public-demo abuse controls remain Phase 6/3B work |
-| 4, 5, 7, 8 | Not started (the DynamoDB store from D-023 covers only the cloud half of Phase 4) |
+| 4 Persistence and timeline | **Built and tested**: SQLite store, restart recovery, derived timeline, duplicate-start protection |
+| 5 Approval, remediation, verification | **Built and tested**: server-side gate, runs once, verification is a separate state, INC-1006 verification failure |
+| 7, 8 | Not started (a small measured run exists in backend/evaluation) |
 
-Current reality: the UI is **not** wired to the API (it still uses in-browser mock data). No LLM is called anywhere.
-Storage is in memory. Nothing is deployed. Nothing is committed to Git.
+Current reality: the UI is wired to the API. The mock provider is the default; the OpenAI provider is opt-in. Local storage
+is a SQLite file. Nothing is deployed.
 
 ## What this is
 A portfolio MVP: pick a *simulated* production incident, let an LLM agent investigate it with allowlisted read-only
