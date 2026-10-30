@@ -11,7 +11,8 @@ Where `AgentOps_AI_Claude_Code_Build_Plan.md` mentions Bedrock or AgentCore, thi
 | 2 FastAPI + deterministic simulator | **Approved** by the user (`APPROVE PHASE 2`, 2026-10-28). Verified locally: 84 tests, ruff, mypy |
 | 3A Offline investigator + API/UI integration | **Not started.** Waiting for the user's explicit go-ahead |
 | 3B Live OpenAI integration | Not started. Own review gate after 3A |
-| 4 to 8 | Not started. Nothing below this table is implemented |
+| 6 (infrastructure and CI/CD part) | **Pulled forward at the user's request (2026-10-30).** CDK stacks, GitHub Actions with OIDC, alarms, budget, teardown: written and tested locally, **not yet deployed**. Platform decision recorded as D-023/D-024. Live OpenAI hosting and public-demo abuse controls remain Phase 6/3B work |
+| 4, 5, 7, 8 | Not started (the DynamoDB store from D-023 covers only the cloud half of Phase 4) |
 
 Current reality: the UI is **not** wired to the API (it still uses in-browser mock data). No LLM is called anywhere.
 Storage is in memory. Nothing is deployed. Nothing is committed to Git.

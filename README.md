@@ -1,50 +1,171 @@
 # AgentOps AI
 
-AI-assisted incident investigation over **simulated demo telemetry**. An LLM agent (OpenAI when enabled; a deterministic
-mock by default) uses allowlisted, read-only diagnostic tools to propose an evidence-backed root cause; a human approves a
-bounded, simulated remediation; the app verifies the result and keeps an audit timeline.
+AI-assisted incident investigation over **simulated demo telemetry**. An agent uses allowlisted, read-only diagnostic
+tools to propose an evidence-backed root cause; a human approves a bounded, simulated remediation; the app verifies the
+result and keeps an audit timeline. The model provider is a deterministic mock by default (OpenAI is planned, opt-in).
 
-> **Status: Phases 1 and 2 approved; Phase 3A not started.** The `frontend/` UI still uses scripted in-browser
-> mock data and does **not** call the `backend/` API yet. The API serves a deterministic simulator from memory.
-> **No LLM is integrated yet** (not OpenAI, not any other provider), nothing is persisted, and nothing is deployed.
-> Sections below describe intent unless stated otherwise. Architecture was revised on 2026-10-28 (see DECISIONS.md D-018).
+> **Status**
+> - **Backend** (FastAPI): incidents, diagnostics and the bounded investigation loop with the deterministic mock provider
+>   work, with 200+ tests. No LLM is integrated yet. Remediation has no HTTP route yet (needs the Phase 5 approval gate).
+> - **Frontend** (Next.js): still runs on scripted in-browser mock data and does **not** call the API yet (Phase 3A, UI wiring).
+> - **AWS deployment**: defined as code and CI/CD below. Verified locally: unit tests, `cdk synth --strict` with cdk-nag,
+>   a Docker-free Lambda build. **Not yet verified until the first real deploy:** the live site, the OIDC role
+>   assumption from GitHub, and the PR `cdk diff` permissions. Section [First deploy](#first-deploy-one-time) lists them.
 
-## Intended run modes
-1. **Default, no credentials:** frontend + backend + simulator + deterministic mock provider (works offline).
-2. **LLM mode (planned, Phase 3B):** adds `AGENT_PROVIDER=openai` and `OPENAI_API_KEY` in the backend environment only.
-3. **AWS mode (optional, later):** deployed backend; optionally DynamoDB and read-only CloudWatch telemetry.
+## Architecture
 
-Telemetry is **simulated** unless explicitly switched to real CloudWatch data, and the two are always labelled differently.
-
-## Run the UI locally (Phase 1)
+```mermaid
+flowchart LR
+  user([Browser]) --> cf["CloudFront<br/>HTTPS, security headers"]
+  cf -- "/ (static export)" --> s3[("S3 site bucket<br/>private, OAC only")]
+  cf -- "/api/*, /health" --> apigw["API Gateway HTTP API<br/>throttled 10 rps"]
+  apigw --> fn["Lambda: FastAPI + Mangum<br/>Python 3.13, arm64"]
+  fn -- "Get/Put/Update/DeleteItem only" --> ddb[("DynamoDB<br/>investigations, TTL 7d")]
+  secret[["Secrets Manager<br/>OpenAI key slot (unused until 3B)"]]
+  fn -. "no access yet" .-> secret
+  fn --> logs[(CloudWatch Logs)]
+  alarms["CloudWatch alarms<br/>Lambda errors, throttles,<br/>API 5xx, slow p95"] --> sns{{SNS email}}
+  budget["AWS Budget<br/>50% / 80% / forecast 100%"] --> sns
+  fn -.-> alarms
 ```
-cd frontend
-npm install
-npm run dev      # http://localhost:3000
-npm run lint && npx tsc --noEmit && npm run build
-```
-Requires Node 20+ (developed on Node 24).
 
-## Run the API locally (Phase 2)
+The site and the API share one origin (CloudFront routes `/api/*` to API Gateway), so there is no CORS configuration.
+Everything the user sees is simulated demo telemetry, labelled as such.
+
+### Stacks (per stage: `dev`, `prod`)
+| Stack | Contents | Why separate |
+|---|---|---|
+| `AgentOps-<stage>-Data` | DynamoDB table, Secrets Manager slot | Stateful. In prod: retained, point-in-time recovery, deletion and termination protection |
+| `AgentOps-<stage>-Backend` | Lambda, HTTP API, log group | Replaceable on every deploy |
+| `AgentOps-<stage>-Frontend` | S3, CloudFront, site deployment | Build output, always reproducible |
+| `AgentOps-<stage>-Monitoring` | Alarms, SNS topic, budget | Notifications and cost guardrail |
+| `AgentOps-GitHubOidc` | OIDC provider, deploy and diff roles | Account-level, deployed by hand, **not** by CI |
+
+## Run locally (no AWS, no credentials)
 ```
 cd backend
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements-dev.txt     # Windows; use .venv/bin/python elsewhere
+.venv\Scripts\python -m pip install -r requirements-dev.txt     # Windows; .venv/bin/python elsewhere
 .venv\Scripts\python -m uvicorn app.main:app --port 8000        # docs at http://localhost:8000/docs
 .venv\Scripts\python -m pytest && .venv\Scripts\python -m ruff check . && .venv\Scripts\python -m mypy
-```
-The API serves **simulated** incidents, logs, metrics and deployments from memory (restart resets state).
-The frontend does not call it yet. Developed on Python 3.14.
 
-## Planned features
-- Incident dashboard and detail view (simulated incidents, clearly labelled)
-- Bounded, provider-agnostic tool-using investigator: OpenAI when enabled, deterministic labelled mock otherwise
-- Evidence-backed findings with explicit uncertainty
-- Approval-gated simulated remediation and verification
-- Persisted investigation timeline
+cd frontend
+npm install && npm run dev                                      # http://localhost:3000
+npm run lint && npm run typecheck && npm run build              # build writes the static site to frontend/out
+```
+Needs Node 20+ and Python 3.12+. The DynamoDB store tests use `moto`, which cannot install on Python 3.15 yet (no PyYAML
+wheel); those tests skip there and run in CI on 3.13.
+
+## Deploy to AWS
+
+### First deploy (one time)
+Prerequisites: an AWS account, **a non-root admin identity** (IAM Identity Center or an IAM user), the AWS CLI v2, Node 20+,
+Python 3.12+, and the GitHub CLI (`gh`) if you want to set variables from the terminal.
+
+```bash
+aws login                      # or: aws sso login --profile <profile>
+scripts/bootstrap.sh           # installs the toolchain, `cdk bootstrap`, deploys the OIDC stack (prompts before creating IAM roles)
+```
+Then set three repository **variables** (not secrets; none of them is a credential). `bootstrap.sh` prints the exact
+commands with your role ARNs filled in:
+
+| Variable | Value |
+|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | role CI assumes on pushes to `main` |
+| `AWS_DIFF_ROLE_ARN` | read-only role CI assumes on pull requests |
+| `ALERT_EMAIL` | where alarms and budget notices go (kept out of git) |
+
+Recommended GitHub settings: protect `main` (require a pull request and that the **Pull request** workflow's checks pass), and
+require approval for workflows from outside collaborators. Then push to `main`, or run the **Deploy** workflow.
+Confirm the subscription email AWS sends to `ALERT_EMAIL`, or no alarm will reach you.
+
+To try a stage from your own machine first:
+```bash
+cd frontend && npm run build && cd ../infra
+source .venv/Scripts/activate            # .venv/bin/activate on macOS/Linux
+npx cdk deploy 'AgentOps-dev-*' -c stage=dev -c alertEmail=you@example.com
+../scripts/smoke_test.sh "$(aws cloudformation describe-stacks --stack-name AgentOps-dev-Frontend --query "Stacks[0].Outputs[?OutputKey=='SiteUrl'].OutputValue" --output text)"
+```
+
+### Remove it
+```bash
+scripts/teardown.sh --stage dev --dry-run      # see the plan
+scripts/teardown.sh --stage dev                # asks you to type the stage; keeps the data stack
+scripts/teardown.sh --stage dev --include-data # also deletes the table and secret slot
+```
+See the script header for its safety rails (refuses root, only touches stacks tagged `Project=agentops`, prod always
+prompts, never touches the OIDC stack).
+
+## How CI/CD works
+
+```mermaid
+sequenceDiagram
+  actor Dev
+  participant GH as GitHub Actions
+  participant STS as AWS STS
+  participant CDK as CDK bootstrap roles
+  participant AWS as CloudFormation
+  Dev->>GH: open pull request
+  GH->>GH: checks: ruff, mypy, pytest, eslint, tsc, next build, cdk synth --strict (dev and prod)
+  GH->>STS: OIDC token (sub = repo:...:pull_request)
+  STS-->>GH: short-lived read-only credentials
+  GH->>AWS: cdk diff (templates only), shown in the job summary
+  Dev->>GH: merge to main
+  GH->>GH: same checks, builds the site once
+  GH->>STS: OIDC token (sub = repo:...:ref:refs/heads/main)
+  STS-->>GH: short-lived deploy credentials
+  GH->>CDK: assume deploy / file-publishing roles
+  CDK->>AWS: cdk deploy AgentOps-prod-* (IAM widening fails the run)
+  GH->>AWS: smoke test the live URL, including a real investigation
+```
+
+- **`pr.yml`**: on pull request. Runs the shared checks, then `cdk diff` for production with a role that can only read.
+  Skipped for forked PRs, which GitHub gives no OIDC token.
+- **`deploy.yml`**: on push to `main`. Same checks, then deploys the *exact* site build that passed, then
+  [`scripts/smoke_test.sh`](scripts/smoke_test.sh). A `concurrency` group (`deploy-prod`, never cancelling) means two
+  deploys cannot run at once; the second waits.
+- **No long-lived keys anywhere.** GitHub signs a token per run; AWS trusts it only if the signed `sub` names this
+  repository and `refs/heads/main` (deploy) or `pull_request` (diff). Exact-match conditions, no wildcards.
+- **IAM-widening deploys fail instead of prompting** (`--require-approval broadening`). Run **Deploy** manually with
+  `allow_iam_changes` after reviewing the diff.
+- Third-party actions are pinned to commit SHAs; Dependabot proposes updates weekly.
+
+## Operations
+- **Alarms** (`agentops-<stage>-*`): Lambda errors, Lambda throttles, **API 5xx**, and p95 duration above 80% of the timeout.
+  API 5xx is separate on purpose: the app turns unexpected exceptions into a JSON 500, which Lambda counts as a success.
+- **Budget** `agentops-<stage>-monthly-cost` (default $10, change with `-c budgetLimitUsd=`): emails at 50% and 80% of
+  actual spend and at 100% forecast. AWS Budgets are account-wide, so each one watches the whole account.
+- **Logs** in CloudWatch, 7 days (dev) or 30 days (prod). The app logs error classes, never request bodies or prompts.
+- **OpenAI key slot** is empty. When Phase 3B needs it: `aws secretsmanager put-secret-value --secret-id <name> --secret-string file://key.txt`
+  (name is the `OpenAiSecretName` output of the Data stack), and grant the function read access in `backend_stack.py`.
+
+## Cost notes
+Estimates, not quotes; check current AWS pricing. At demo traffic nearly everything sits inside the free tier or rounds to
+cents: Lambda, API Gateway HTTP API, DynamoDB on-demand, CloudFront (price class 100), S3 and the first 10 alarms are
+effectively free. The standing costs are **Secrets Manager (about $0.40 per secret per month, one per stage)** and a few
+cents of logs. Expect **roughly $1 a month per deployed stage when idle**. The budget will email before a surprise.
+What could change that: someone hammering the public API (throttled to 10 requests/s, which bounds Lambda and DynamoDB
+cost), or turning on WAF, a custom domain, or a larger Lambda. `scripts/teardown.sh` returns the account to zero.
+
+## Design decisions and tradeoffs
+Full log with alternatives in [DECISIONS.md](DECISIONS.md) (D-023, D-024 cover this work).
+
+| Decision | Why | Cost of the choice |
+|---|---|---|
+| Static export on S3 + CloudFront, not SSR/Amplify | Nothing needs a server; cheapest and simplest to secure | Had to drop Next.js Cache Components (unused); revisit if a route needs request-time rendering |
+| Lambda + HTTP API + DynamoDB | Pay-per-use; no idle compute | State had to move out of memory; investigations run inside the request, so they must finish in under 29s. Fine for the mock, **must change for live LLM calls** |
+| Conditional-write lock for "one investigation per incident" | Correct across containers, no extra service | A crashed run blocks its incident for up to 60s |
+| Python CDK, one stack per concern | Same language as the backend; stateful resources can't be replaced by a code deploy | More stacks to read |
+| Lambda bundled with pip `--platform manylinux2014_aarch64` | No Docker on laptop or runner; identical package everywhere; Graviton is cheaper | Only wheels (no source builds); cross-platform pip must stay in step with the runtime version |
+| OIDC roles may only `sts:AssumeRole` the CDK bootstrap roles | What a deploy can change is governed in one place | **Known limit:** the bootstrap CloudFormation execution role is `AdministratorAccess` by default, so a compromised `main` could still do anything via CloudFormation. Mitigations: branch protection, `broadening` fail-closed, OIDC stack outside CI. Next step: bootstrap with a scoped `--cloudformation-execution-policies` |
+| No `prod` GitHub Environment | The deploy role's trust is pinned to `refs/heads/main`; environments change the token's `sub` to `environment:prod`, which loses the branch check | No built-in manual approval gate; the pull-request review is the gate |
+| cdk-nag in every synth, with a written reason per acknowledgement | Security review is automatic and auditable | Some findings (WAF, access logs, custom TLS) are consciously accepted for cost |
+| No WAF, no custom domain | WAF alone costs more than everything else here | Default `*.cloudfront.net` certificate and TLS policy; throttling is the only abuse control |
+| Dev and prod in one account | Simplest for a portfolio project | No blast-radius isolation between stages; use separate accounts for real workloads |
+
+## Security
+See [SECURITY.md](SECURITY.md). In short: simulated data only, no secrets in git, no long-lived AWS keys, least-privilege
+runtime role (four DynamoDB calls on one table), private bucket reachable only through CloudFront, root account never used.
 
 ## Docs
 [PLAN.md](PLAN.md) · [DECISIONS.md](DECISIONS.md) · [SECURITY.md](SECURITY.md) · build spec: `AgentOps_AI_Claude_Code_Build_Plan.md`
-
-## Setup, architecture diagram, tests, evaluation results, deployment, cost and cleanup
-To be written as the corresponding phases are completed and verified.

@@ -16,6 +16,14 @@ Portfolio MVP, not a production system. All data is synthetic by default. Revise
   that phase needs (hosting, secrets read, logs write, and only if adopted: one DynamoDB table, CloudWatch read). Whether the root
   user currently has long-lived access keys is unverified; check in the console and delete any that exist.
 - Local runs in the default mock mode need no credentials at all.
+- **CI/CD (D-023):** GitHub Actions authenticates to AWS with OIDC, never with stored keys. The deploy role trusts exactly
+  `repo:SAURABHSALVE/agentops:ref:refs/heads/main`; the pull-request role trusts `...:pull_request` and can only assume the
+  CDK lookup role. Both can do nothing except `sts:AssumeRole` on CDK bootstrap roles. The OIDC stack is deployed by a human,
+  not by CI. Known limit: the default CDK CloudFormation execution role is administrator-level, so protect `main` and consider
+  bootstrapping with a scoped `--cloudformation-execution-policies`.
+- The alert email is a GitHub *variable* and a CDK context value, never committed; workflows mask it in logs.
+- The public API has no authentication (simulated data only). It is throttled at API Gateway (10 req/s, burst 20). Add real
+  access control before any billable key (Phase 3B) is reachable from it.
 
 ## Data egress
 - With `AGENT_PROVIDER=openai`, prompts, log excerpts and tool results are sent to OpenAI. That is acceptable only for the
