@@ -1,0 +1,48 @@
+"""Stateful resources, kept in their own stack so a code deploy can never replace them."""
+
+from typing import Any
+
+from aws_cdk import CfnOutput, RemovalPolicy, SecretValue, Stack, Tags
+from aws_cdk import aws_dynamodb as dynamodb
+from aws_cdk import aws_secretsmanager as secretsmanager
+from constructs import Construct
+
+from agentops_infra.config import StageConfig
+
+
+class DataStack(Stack):
+    def __init__(self, scope: Construct, construct_id: str, *, cfg: StageConfig, **kwargs: Any) -> None:
+        # Termination protection: destroying production data must be a deliberate, two-step act.
+        super().__init__(scope, construct_id, termination_protection=cfg.is_prod, **kwargs)
+        keep = RemovalPolicy.RETAIN if cfg.is_prod else RemovalPolicy.DESTROY
+
+        # Investigation records. Layout and TTL attribute are defined by backend/app/agent/dynamodb_store.py.
+        self.table = dynamodb.Table(
+            self,
+            "Investigations",
+            table_name=f"{cfg.prefix}-investigations",
+            partition_key=dynamodb.Attribute(name="pk", type=dynamodb.AttributeType.STRING),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            time_to_live_attribute="expires_at",
+            point_in_time_recovery_specification=dynamodb.PointInTimeRecoverySpecification(
+                point_in_time_recovery_enabled=cfg.is_prod
+            ),
+            deletion_protection=cfg.is_prod,
+            removal_policy=keep,
+        )
+
+        # An empty slot for the future OpenAI key (Phase 3B). Nothing reads it and no role can read it yet.
+        # The value is set by hand so it never touches git, CloudFormation parameters or CI logs:
+        #   aws secretsmanager put-secret-value --secret-id <OpenAiSecretName output> --secret-string file://key.txt
+        # CloudFormation only rewrites the value if this placeholder changes, so a manual value survives deploys.
+        self.openai_key = secretsmanager.Secret(
+            self,
+            "OpenAiApiKey",
+            description=f"OpenAI API key for AgentOps ({cfg.stage}). Placeholder until Phase 3B; set by hand.",
+            secret_string_value=SecretValue.unsafe_plain_text("REPLACE_ME_set_by_hand"),  # a label, not a secret
+            removal_policy=keep,
+        )
+
+        Tags.of(self).add("Component", "data")
+        CfnOutput(self, "TableName", value=self.table.table_name)
+        CfnOutput(self, "OpenAiSecretName", value=self.openai_key.secret_name)
