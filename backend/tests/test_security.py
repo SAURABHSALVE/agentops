@@ -191,14 +191,17 @@ def test_rate_limit_settings_are_validated(monkeypatch: pytest.MonkeyPatch) -> N
     assert (s.rate_per_minute, s.rate_per_hour) == (5, 50)
 
 
-def test_every_write_route_is_behind_the_access_gate(sim: Simulator) -> None:
+def test_every_write_route_is_behind_the_access_gate() -> None:
     """Structural guard: a future POST route that forgets the dependency fails here, not in production."""
     from fastapi.routing import APIRoute
 
-    from app.api import require_access
+    from app.api import require_access, router
 
-    app = create_app(simulator=sim, settings=Settings(storage_mode="memory"))
-    writes = [r for r in app.routes if isinstance(r, APIRoute) and r.methods & {"POST", "PUT", "PATCH", "DELETE"}]
+    writes = [
+        r
+        for r in router.routes
+        if isinstance(r, APIRoute) and (r.methods or set()) & {"POST", "PUT", "PATCH", "DELETE"}
+    ]
     assert len(writes) == 3
     for route in writes:
         assert any(d.call is require_access for d in route.dependant.dependencies), route.path
