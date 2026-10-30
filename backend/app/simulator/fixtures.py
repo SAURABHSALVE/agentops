@@ -150,6 +150,29 @@ INCIDENTS: tuple[IncidentDetail, ...] = (
             ),
         ],
     ),
+    IncidentDetail(
+        id="INC-1006",
+        title="Worker backlog persists after restarts",
+        service="worker-service",
+        severity="high",
+        status="open",
+        summary="The notification queue keeps growing; earlier restarts did not clear the backlog.",
+        started_at=_t(11, 0),
+        window_end=_t(11, 40),
+        updated_at=_t(11, 40),
+        signals=[
+            Signal(label="Queue depth", value="9,800 (baseline < 200)"),
+            Signal(label="Oldest message age", value="27 min"),
+        ],
+        history=[
+            TimelineEvent(
+                id="e-1006-1",
+                at=_t(11, 0),
+                kind="incident",
+                title="Alert fired: queue depth above 5,000",
+            ),
+        ],
+    ),
 )
 
 # ---- Logs ------------------------------------------------------------------------------------
@@ -245,6 +268,31 @@ def _worker_logs() -> tuple[LogEntry, ...]:
     return _number("worker-service", 300, raw)
 
 
+def _worker_persistent_logs() -> tuple[LogEntry, ...]:
+    """INC-1006: the same downstream failure as INC-1003, but a restart does not fix it.
+
+    The fault is in the dependency, so a worker restart succeeds as an action while the queue
+    stays high: this is the "action succeeded, verification failed" scenario.
+    """
+    raw: list[_RawLog] = [
+        (_t(10, 58), "INFO", "processed batch 9120 (50 messages)"),
+        (_t(10, 59), "INFO", "processed batch 9121 (50 messages)"),
+    ]
+    first = _t(11, 0, 20)
+    for k in range(48):
+        ts = first + timedelta(seconds=45 * k)
+        raw.append(
+            (
+                ts,
+                "ERROR",
+                f"downstream notifier returned 503; retry {1 + k % 5} of 5 scheduled (message_id=msg-{k + 70000:05d})",
+            )
+        )
+        if k % 12 == 11:
+            raw.append((ts + timedelta(seconds=2), "WARN", "retry queue length above 5000"))
+    return _number("worker-service", 600, raw)
+
+
 def _search_logs() -> tuple[LogEntry, ...]:
     raw: list[_RawLog] = [
         (_t(8, 50), "INFO", "index shard 3 refreshed"),
@@ -264,6 +312,7 @@ LOGS: dict[str, tuple[LogEntry, ...]] = {
     "INC-1003": _worker_logs(),
     "INC-1004": _search_logs(),
     "INC-1005": _checkout_injection_logs(),
+    "INC-1006": _worker_persistent_logs(),
 }
 
 # ---- Deployments -----------------------------------------------------------------------------
@@ -329,6 +378,8 @@ METRICS: dict[tuple[str, MetricName], MetricSpec] = {
     ("INC-1004", "error_rate"): MetricSpec("percent", 0.4, 0.4, "step", onset=_t(9, 0)),
     ("INC-1005", "error_rate"): MetricSpec("percent", 0.2, 9.1, "step", onset=_t(10, 20)),
     ("INC-1005", "p99_latency_ms"): MetricSpec("ms", 240, 2850, "step", onset=_t(10, 20)),
+    ("INC-1006", "queue_depth"): MetricSpec("messages", 150, 9800, "step", onset=_t(11, 0), ramp_minutes=30),
+    ("INC-1006", "error_rate"): MetricSpec("percent", 0.5, 58.0, "step", onset=_t(11, 0)),
 }
 
 # ---- Verification ----------------------------------------------------------------------------
@@ -347,4 +398,6 @@ VERIFICATION: dict[str, tuple[VerifySpec, ...]] = {
     "INC-1003": (VerifySpec("queue_depth", 1000, 420),),
     "INC-1004": (),
     "INC-1005": (VerifySpec("error_rate", 1.0, 0.2), VerifySpec("p99_latency_ms", 500, 250)),
+    # The restart "succeeds" but the backlog stays above the threshold: verification must fail.
+    "INC-1006": (VerifySpec("queue_depth", 1000, 7400),),
 }
