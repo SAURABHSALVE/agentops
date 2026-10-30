@@ -7,16 +7,45 @@ result and keeps an audit timeline. The model provider is a deterministic mock b
 > **Status (Phases 1 to 5 built and tested locally)**
 > - **Backend** (FastAPI): incidents, diagnostics, a bounded investigation loop with two providers (offline mock and
 >   live OpenAI), evidence grounding, a server-side approval gate, simulated remediation with separate verification,
->   SQLite persistence and a derived audit timeline. 260+ tests, ruff and mypy clean.
-> - **Frontend** (Next.js): wired to the API; investigations are polled; approve/reject call the server. A
->   dependency-free browser script (`scripts/e2e-ui.mjs`) clicks through the real UI against the real API.
-> - **Not done:** Phase 6 live deployment, a formal Phase 7 evaluation suite (a small measured run is in
->   `backend/evaluation/`), Phase 8 portfolio polish.
+>   SQLite persistence, a derived audit timeline, and public-demo protections (access code, rate limits). 300+ tests,
+>   ruff and mypy clean.
+> - **Frontend** (Next.js): wired to the API; investigations are polled; approve/reject call the server; asks for the
+>   access code when a deployment needs one. `scripts/e2e-ui.mjs` clicks through the real UI against the real API.
+> - **Evaluation:** the seven required cases are an offline test suite; mock and live-model results are measured and
+>   reported with their weaknesses in [docs/EVALUATION.md](docs/EVALUATION.md).
+> - **Not done:** the AWS deployment itself (see "Production readiness" for what blocks it).
 > - **AWS deployment**: defined as code and CI/CD below. Verified locally: unit tests, `cdk synth --strict` with cdk-nag,
 >   a Docker-free Lambda build. **Not yet verified until the first real deploy:** the live site, the OIDC role
 >   assumption from GitHub, and the PR `cdk diff` permissions. Section [First deploy](#first-deploy-one-time) lists them.
 
-## Architecture
+## How it works (what runs locally)
+
+```mermaid
+flowchart LR
+  ui([Browser: Next.js]) -- "REST + polling" --> api["FastAPI<br/>access code, rate limit"]
+  api --> svc["Investigation service"]
+  svc --> loop["Bounded loop<br/>rounds, tokens, tool calls"]
+  loop <--> prov{{"LLMProvider"}}
+  prov --- mock["Mock<br/>offline, deterministic"]
+  prov --- oai["OpenAI<br/>opt-in, key server-side"]
+  loop --> tools["Tool runner<br/>4 read-only tools, strict args,<br/>timeout, size cap"]
+  tools --> sim[("Simulator<br/>synthetic incidents")]
+  loop --> check["Validate answer<br/>schema, evidence ids, allowlist"]
+  svc --> gate["Approval gate<br/>approve once, then verify"]
+  gate --> act["Simulated remediation<br/>closed allowlist"]
+  svc --> db[("SQLite<br/>investigations, approvals")]
+```
+
+The model only proposes. The backend executes tools, records what they returned, rejects any evidence id that was not
+returned, resolves the remediation from its own allowlist, and requires a recorded human approval before anything runs.
+See [docs/DEMO.md](docs/DEMO.md) for a 5-minute walkthrough and [docs/EVALUATION.md](docs/EVALUATION.md) for results.
+
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Findings](docs/screenshots/inc-1001-findings.png) |
+| ![Verification failed](docs/screenshots/inc-1006-not-resolved.png) | ![Prompt injection](docs/screenshots/inc-1005.png) |
+
+## Architecture (AWS deployment, not yet deployed)
 
 ```mermaid
 flowchart LR
@@ -140,6 +169,24 @@ npx cdk deploy 'AgentOps-dev-*' -c stage=dev -c alertEmail=you@example.com
 ../scripts/smoke_test.sh "$(aws cloudformation describe-stacks --stack-name AgentOps-dev-Frontend --query "Stacks[0].Outputs[?OutputKey=='SiteUrl'].OutputValue" --output text)"
 ```
 
+### Production readiness (honest status)
+Done and tested: access code on all writes, per-process rate limits, bounded runs (rounds, tokens, tool calls, tool
+timeouts, result size), secrets read from Secrets Manager (never in the image, repo or browser), generic client errors,
+no prompts or model output in logs, security headers, API throttling, alarms, a budget alert, least-privilege roles
+(DynamoDB item calls and two named secrets only), and a strict cdk-nag synth.
+
+**Not done, and why:**
+- **Nothing is deployed.** The only AWS identity on this machine is the **root user**, which this project forbids using
+  for deployment (SECURITY.md, D-020). To deploy, create a least-privilege identity yourself (an IAM Identity Center
+  profile or a role for the bootstrap, then the OIDC deploy role in `infra/`), sign in from your own terminal, and follow
+  "First deploy" below with `-c agentProvider=openai` for the live model. The first real deploy will also be the first
+  verification of the live site, the OIDC role assumption and the PR `cdk diff` permissions.
+- A live investigation must finish inside API Gateway's 30 s limit; typical runs take 6 to 11 s and the model call times
+  out at 12 s, but a slow provider day can fail a run (it ends `failed`, never with a made-up answer).
+- The per-process rate limit is a backstop, not a global cap; the API throttle and an OpenAI project spend limit are the
+  real cost controls. Set that spend limit before exposing a key.
+- Real telemetry (CloudWatch) is not integrated; all data is synthetic.
+
 ### Remove it
 ```bash
 scripts/teardown.sh --stage dev --dry-run      # see the plan
@@ -220,5 +267,23 @@ Full log with alternatives in [DECISIONS.md](DECISIONS.md) (D-023, D-024 cover t
 See [SECURITY.md](SECURITY.md). In short: simulated data only, no secrets in git, no long-lived AWS keys, least-privilege
 runtime role (four DynamoDB calls on one table), private bucket reachable only through CloudFront, root account never used.
 
+## Résumé bullets (only what was built and measured)
+- Built an incident-investigation agent (FastAPI, Next.js, SQLite) where an LLM proposes and a server-side policy layer
+  enforces: strict tool-argument validation, evidence ids checked against recorded tool output, a closed remediation
+  allowlist, and a human-approval gate with separate "action ran" and "verified resolved" states.
+- Verified the guardrails with a 300+ test suite (seven evaluation cases including prompt injection, malformed output
+  and a verification failure) and a browser end-to-end script; a model scripted to obey an injected instruction could not
+  call an unlisted tool, read another incident, cite unretrieved evidence or get an inapplicable action through.
+- Measured a live `gpt-4.1-mini` against an answer key over 36 runs: no injected instruction followed or cited and no
+  off-list action offered, 2 of 36 runs rejected by validation, and over-stated confidence on the ambiguous incident
+  (reported, not hidden). Average 6 to 11 s and 6k to 12k tokens per investigation.
+- Wrote AWS infrastructure as code (CDK, cdk-nag clean, 35 template tests, least-privilege roles, GitHub OIDC CI/CD);
+  **not deployed**.
+
+## Clean up locally
+Stop both servers. Delete `backend/.data/` (the SQLite file), `backend/.venv/`, `frontend/node_modules/`,
+`frontend/.next/` and `frontend/out/` to reclaim space. Remove the key by deleting `backend/.env`, and **rotate the
+OpenAI key** if it was ever pasted anywhere shared. No cloud resources exist unless you deployed them (see "Remove it").
+
 ## Docs
-[PLAN.md](PLAN.md) · [DECISIONS.md](DECISIONS.md) · [SECURITY.md](SECURITY.md) · build spec: `AgentOps_AI_Claude_Code_Build_Plan.md`
+[docs/EVALUATION.md](docs/EVALUATION.md) · [docs/DEMO.md](docs/DEMO.md) · [PLAN.md](PLAN.md) · [DECISIONS.md](DECISIONS.md) · [SECURITY.md](SECURITY.md) · build spec: `AgentOps_AI_Claude_Code_Build_Plan.md`

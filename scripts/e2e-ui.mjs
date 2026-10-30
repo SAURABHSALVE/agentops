@@ -190,7 +190,7 @@ try {
   await clickButton("Investigate");
   check("INC-1004 investigation finishes", await waitText("tool calls.", 90000));
   t = await text();
-  if (!LIVE) check("ambiguous incident: low confidence and no remediation", t.includes("Confidence: low") && t.includes("No remediation proposed"));
+  if (!LIVE) check("ambiguous incident: low confidence and no remediation", /confidence: low/i.test(t) && t.includes("No remediation proposed"));
   else check("ambiguous incident: no remediation is offered", t.includes("No remediation proposed") || !t.includes("Approve simulated action"));
   await shot("inc-1004");
 

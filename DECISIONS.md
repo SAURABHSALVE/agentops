@@ -84,9 +84,9 @@ One `LLMProvider` interface with a single `complete(...)` call; implementations 
 4. **The stale Bedrock UI copy** in `frontend/src/app/page.tsx` is corrected in the next relevant frontend change (3A, when the UI is wired to the API), not as a separate edit.
 5. **Bedrock, AgentCore and AWS resource creation stay out of scope** until explicitly approved. AWS deployment is evaluated in Phase 6 using least-privilege credentials. This reaffirms D-018 and D-020.
 
-**D-022 · (a) resolved 2026-10-30, (b) still open · Remaining Phase 3/5/6 questions.**
+**D-022 · (a) and (b) resolved 2026-10-30 · Remaining Phase 3/5/6 questions.**
 (a) RESOLVED: new incidents, not variants. INC-1005 (prompt injection) and INC-1006 (action succeeds, verification fails) were added; INC-1001 to INC-1004 are unchanged. The user did not name a choice and asked to proceed, so the recommended option was used.
-(a) New fixtures are needed without altering INC-1001 to INC-1004 expectations: a prompt-injection log (3A) and a remediation-succeeds-but-verification-fails scenario (Phase 5). Decide whether these are new incidents (for example INC-1005/INC-1006) or variants of existing ones. (b) Public-demo access control for Phase 6 (allow-list or password, versus demoing locally only).
+(a) New fixtures are needed without altering INC-1001 to INC-1004 expectations: a prompt-injection log (3A) and a remediation-succeeds-but-verification-fails scenario (Phase 5). Decide whether these are new incidents (for example INC-1005/INC-1006) or variants of existing ones. (b) RESOLVED by me, not by the user, when asked to make it production-ready: a shared access code on every write plus rate limits (D-028). Reads stay open because they serve only simulated data. Change it if you prefer an allow-list or a local-only demo.
 
 **D-023 · accepted (user, 2026-10-30) · AWS hosting: static site on S3 + CloudFront, API on Lambda + API Gateway HTTP API, investigation state in DynamoDB. Infrastructure as Python CDK in `infra/`.**
 1. **Lambda over a container.** Idle cost is about zero and it matches a portfolio audience. The cost is that state cannot live in the container, so investigations move to DynamoDB (`DynamoDbInvestigationStore`, same `InvestigationStore` interface, selected by `STORAGE_MODE=dynamodb`). This pulls the cloud half of Phase 4 forward; local SQLite is still planned.
@@ -113,3 +113,12 @@ The user asked to complete the phases through 5 and test the whole app locally, 
 - Local persistence is one SQLite file (standard library). `create` runs in an IMMEDIATE transaction so one running investigation per incident is atomic; runs interrupted by a restart are marked failed at start-up.
 - The timeline is derived from recorded investigation data instead of a separate event table, so it cannot disagree with the records and works with any store. The DynamoDB store shows only the newest run (no per-incident index).
 - Rejected: a client-supplied action id; a separate mutable event log.
+
+**D-028 · accepted · Public-demo protection: access code on writes, per-process rate limits, secrets from Secrets Manager.**
+- Start, approve and reject require `X-Access-Code` when a code is configured (constant-time compare). A structural test fails if any future write route lacks the gate; it caught that approve/reject were initially unguarded. The limiter runs before a record is created, so a refused request never leaves an investigation stuck `running`.
+- The limiter is per process (so a backstop, not a global cap). The real cost controls are the API Gateway throttle and a spend limit on the OpenAI project.
+- The OpenAI key and the access code are read from Secrets Manager at cold start when `OPENAI_SECRET_ARN` / `ACCESS_SECRET_ARN` are set; failures never echo AWS error text.
+- CDK: live mode is opt-in (`-c agentProvider=openai`); the default synth is unchanged. Rejected: always-on live mode (it would change existing deployments) and a WAF (costs more per month than the rest of the stack).
+
+**D-029 · accepted · Deployment was not performed: the only AWS identity is the root user.**
+SECURITY.md and D-020 forbid root for deployment. Verified read-only (STS identity is root); nothing was created. The deployment code is tested (35 template tests, strict cdk-nag synth in both modes) but unverified against a real account until a least-privilege identity is provided.

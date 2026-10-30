@@ -49,6 +49,9 @@ Portfolio MVP, not a production system. All data is synthetic by default. Revise
 - Provider and SDK errors are mapped to generic client errors; raw provider errors, keys and request payloads are never returned.
 
 ## Public demo
+**Implemented (D-028):** an access code on every write, per-process rate limits, a token budget per investigation, and secrets
+read from Secrets Manager. **Still your job before exposing a key:** set a spend limit on the OpenAI project and budget alerts.
+
 A deployed backend that holds a billable key is an abuse target. Before exposing it: access control and rate limiting on the
 investigate endpoint, a spend limit on the OpenAI project, a token budget per investigation, and budget alerts. Otherwise
 demo locally. The OpenAI key lives in a managed secret store (decided in Phase 6), never in the image, repo or frontend.

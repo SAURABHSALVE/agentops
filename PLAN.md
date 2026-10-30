@@ -14,7 +14,9 @@ Where `AgentOps_AI_Claude_Code_Build_Plan.md` mentions Bedrock or AgentCore, thi
 | 6 (infrastructure and CI/CD part) | **Pulled forward at the user's request (2026-10-30).** CDK stacks, GitHub Actions with OIDC, alarms, budget, teardown: written and tested locally, **not yet deployed**. Platform decision recorded as D-023/D-024. Live OpenAI hosting and public-demo abuse controls remain Phase 6/3B work |
 | 4 Persistence and timeline | **Built and tested**: SQLite store, restart recovery, derived timeline, duplicate-start protection |
 | 5 Approval, remediation, verification | **Built and tested**: server-side gate, runs once, verification is a separate state, INC-1006 verification failure |
-| 7, 8 | Not started (a small measured run exists in backend/evaluation) |
+| 6 Deployment and operations | **Code, tests and docs done; not deployed.** Access code, rate limits, secrets, opt-in live mode, CDK tested. Blocked on a least-privilege AWS identity (only root exists; D-029) |
+| 7 Evaluation and hardening | **Done**: seven-case offline suite, measured mock and live runs, weaknesses reported (docs/EVALUATION.md) |
+| 8 Portfolio finish | **Done** except live-site screenshots: README, diagram, demo script, screenshots, cleanup, measured résumé bullets |
 
 Current reality: the UI is wired to the API. The mock provider is the default; the OpenAI provider is opt-in. Local storage
 is a SQLite file. Nothing is deployed.
