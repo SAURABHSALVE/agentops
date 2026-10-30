@@ -6,7 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from app.agent.coordinator import FAILURE_MESSAGES, Coordinator, Limits
-from app.agent.models import Failure, Investigation, RemediationRecord
+from app.agent.models import Failure, Investigation, ProviderInfo, RemediationRecord
 from app.agent.provider import LLMProvider
 from app.agent.store import InvestigationStore
 from app.agent.timeline import effective_status, events_for
@@ -48,6 +48,10 @@ class InvestigationService:
             max_output_tokens=settings.max_output_tokens,
         )
         self._coordinator = Coordinator(provider, runner, limits, clock)
+
+    @property
+    def provider_info(self) -> ProviderInfo:
+        return self._provider.info
 
     def start(self, incident_id: str) -> Investigation:
         """Validate the incident and record a running investigation. Cheap; the work is in run()."""

@@ -1,6 +1,7 @@
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -20,10 +21,13 @@ from app.errors import (
     InvestigationInProgressError,
     InvestigationNotFoundError,
     MetricNotAvailableError,
+    RateLimitedError,
     RemediationStateError,
+    UnauthorizedError,
 )
 from app.repository import InMemoryIncidentRepository
 from app.schemas import ErrorDetail, ErrorResponse
+from app.security import ACCESS_HEADER, AccessGate, RateLimiter, load_access_code
 from app.simulator.service import Simulator
 
 logger = logging.getLogger("agentops")
@@ -34,6 +38,8 @@ _STATUS_BY_CODE = {
     InvestigationNotFoundError.code: 404,
     InvestigationInProgressError.code: 409,
     RemediationStateError.code: 409,
+    UnauthorizedError.code: 401,
+    RateLimitedError.code: 429,
 }
 
 
@@ -56,6 +62,7 @@ def create_app(
     settings: Settings | None = None,
     provider: LLMProvider | None = None,
     store: InvestigationStore | None = None,
+    access: AccessGate | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
@@ -71,17 +78,31 @@ def create_app(
         app.state.simulator, store or _build_store(settings), provider or build_provider(settings), settings
     )
 
+    app.state.access = access or AccessGate(load_access_code())
+    app.state.limiter = RateLimiter(settings.rate_per_minute, settings.rate_per_hour)
+
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        if request.url.path.startswith("/api/"):
+            response.headers.setdefault("Cache-Control", "no-store")
+        return response
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.cors_allow_origins),
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type"],
+        allow_headers=["Content-Type", ACCESS_HEADER],
     )
 
     @app.exception_handler(AgentOpsError)
     async def _domain_error(_: Request, exc: AgentOpsError) -> JSONResponse:
         status = _STATUS_BY_CODE.get(exc.code, 400)
-        return _envelope(status, ErrorDetail(code=exc.code, message=exc.message))
+        response = _envelope(status, ErrorDetail(code=exc.code, message=exc.message))
+        if isinstance(exc, RateLimitedError):
+            response.headers["Retry-After"] = str(exc.retry_after)
+        return response
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:

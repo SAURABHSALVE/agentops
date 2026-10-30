@@ -6,7 +6,7 @@ request body, so a client cannot choose an action, a tool or an incident beyond 
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Path, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Path, Query, Request
 
 from app.agent.models import Investigation
 from app.agent.service import InvestigationService
@@ -28,6 +28,7 @@ from app.schemas import (
     SearchLogsArgs,
     TimelineEvent,
 )
+from app.security import ACCESS_HEADER
 from app.simulator.service import Simulator
 
 IncidentIdPath = Annotated[str, Path(pattern=r"^INC-\d{4}$", description="Incident id, e.g. INC-1001")]
@@ -40,6 +41,11 @@ _START_ERRORS: dict[int | str, dict[str, Any]] = {**_ERRORS, 409: {"model": Erro
 router = APIRouter()
 
 
+def require_access(request: Request, x_access_code: Annotated[str | None, Header(alias=ACCESS_HEADER)] = None) -> None:
+    """Gate for every write. A no-op unless an access code is configured."""
+    request.app.state.access.check(x_access_code)
+
+
 def _sim(request: Request) -> Simulator:
     sim: Simulator = request.app.state.simulator
     return sim
@@ -48,6 +54,17 @@ def _sim(request: Request) -> Simulator:
 def _investigations(request: Request) -> InvestigationService:
     svc: InvestigationService = request.app.state.investigations
     return svc
+
+
+@router.get("/api/config", tags=["system"])
+def public_config(request: Request) -> dict[str, Any]:
+    """What the UI needs to know up front. Contains nothing secret."""
+    info = _investigations(request).provider_info
+    return {
+        "data_mode": "simulated",
+        "write_access": "code_required" if request.app.state.access.required else "open",
+        "provider": {"kind": info.kind, "label": info.label},
+    }
 
 
 @router.get("/health", response_model=HealthResponse, tags=["system"])
@@ -124,10 +141,12 @@ def get_deployments(
     status_code=202,
     responses=_START_ERRORS,
     tags=["investigations"],
+    dependencies=[Depends(require_access)],
 )
 def start_investigation(incident_id: IncidentIdPath, request: Request, background: BackgroundTasks) -> Investigation:
     """Start an investigation and return immediately; poll the returned id until it is not 'running'."""
     svc = _investigations(request)
+    request.app.state.limiter.check()  # before any record exists, so a refusal never leaves one 'running'
     started = svc.start(incident_id)
     background.add_task(svc.run, started.id)
     return started
@@ -158,6 +177,7 @@ def get_investigation(investigation_id: InvestigationIdPath, request: Request) -
     response_model=Investigation,
     responses=_START_ERRORS,
     tags=["approval"],
+    dependencies=[Depends(require_access)],
 )
 def approve_remediation(investigation_id: InvestigationIdPath, request: Request) -> Investigation:
     """Approve the remediation proposed by this investigation, run it (simulated) and verify it.
@@ -173,6 +193,7 @@ def approve_remediation(investigation_id: InvestigationIdPath, request: Request)
     response_model=Investigation,
     responses=_START_ERRORS,
     tags=["approval"],
+    dependencies=[Depends(require_access)],
 )
 def reject_remediation(investigation_id: InvestigationIdPath, request: Request) -> Investigation:
     return _investigations(request).reject(investigation_id)

@@ -44,3 +44,15 @@ class RemediationStateError(AgentOpsError):
     """The requested approval transition is not valid from the current state."""
 
     code = "invalid_remediation_state"
+
+
+class UnauthorizedError(AgentOpsError):
+    code = "unauthorized"
+
+
+class RateLimitedError(AgentOpsError):
+    code = "rate_limited"
+
+    def __init__(self, message: str, retry_after: int = 60) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after

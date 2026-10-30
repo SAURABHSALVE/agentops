@@ -55,6 +55,9 @@ class Settings:
     max_output_tokens: int = 1_500
     tool_timeout_seconds: int = 5
     tool_result_max_bytes: int = 16_384
+    # Public-demo backstops (per process). Generous locally; the AWS stack sets lower values.
+    rate_per_minute: int = 30
+    rate_per_hour: int = 300
     # Where records live: "local" (SQLite file), "memory" (tests), or "dynamodb" (needs dynamodb_table).
     storage_mode: str = "local"
     dynamodb_table: str = ""
@@ -86,6 +89,8 @@ class Settings:
             max_output_tokens=_int_env("OPENAI_MAX_OUTPUT_TOKENS", cls.max_output_tokens, 1, 16_000),
             tool_timeout_seconds=_int_env("TOOL_TIMEOUT_SECONDS", cls.tool_timeout_seconds, 1, 60),
             tool_result_max_bytes=_int_env("TOOL_RESULT_MAX_BYTES", cls.tool_result_max_bytes, 1_024, 1_048_576),
+            rate_per_minute=_int_env("INVESTIGATIONS_PER_MINUTE", cls.rate_per_minute, 1, 10_000),
+            rate_per_hour=_int_env("INVESTIGATIONS_PER_HOUR", cls.rate_per_hour, 1, 100_000),
             storage_mode=storage_mode,
             dynamodb_table=table,
             local_data_dir=os.environ.get("LOCAL_DATA_DIR", "").strip() or cls.local_data_dir,
