@@ -30,6 +30,12 @@ def acknowledge_data(stack: DataStack, cfg: StageConfig) -> None:
         "AwsSolutions-SMG4",
         "Rotation is not possible for a third-party API key; it is rotated by hand in the OpenAI console.",
     )
+    if stack.access_code is not None:
+        _ack(
+            stack.access_code,
+            "AwsSolutions-SMG4",
+            "A shared demo access code, rotated by replacing the secret value; automatic rotation adds no safety here.",
+        )
     if not cfg.is_prod:
         _ack(
             stack.table, "AwsSolutions-DDB3", "Point-in-time recovery is enabled in prod only; dev data is disposable."

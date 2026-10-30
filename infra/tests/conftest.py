@@ -31,9 +31,9 @@ class Built:
     backend_stack: BackendStack
 
 
-def build(stage: str, backend_dir: Path) -> Built:
+def build(stage: str, backend_dir: Path, agent_provider: str = "mock") -> Built:
     app = cdk.App()
-    cfg = StageConfig(stage=stage, alert_email=EMAIL, budget_limit_usd=10)
+    cfg = StageConfig(stage=stage, alert_email=EMAIL, budget_limit_usd=10, agent_provider=agent_provider)
     data = DataStack(app, "Data", cfg=cfg, env=ENV)
     backend = BackendStack(app, "Backend", cfg=cfg, data=data, backend_dir=backend_dir, env=ENV)
     frontend = FrontendStack(
@@ -73,3 +73,8 @@ def prod(fake_backend: Path) -> Built:
 def oidc() -> Template:
     app = cdk.App()
     return Template.from_stack(GitHubOidcStack(app, "Oidc", repo=REPO, env=ENV))
+
+
+@pytest.fixture(scope="session")
+def live(fake_backend: Path) -> Built:
+    return build("dev", fake_backend, agent_provider="openai")

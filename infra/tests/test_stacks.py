@@ -293,3 +293,63 @@ def test_no_aws_account_id_is_written_down_in_the_source() -> None:
     files = [*root.glob("*.py"), *root.glob("agentops_infra/*.py"), root / "cdk.json"]
     offenders = [f.name for f in files if re.search(r"(?<!\d)\d{12}(?!\d)", f.read_text(encoding="utf-8"))]
     assert offenders == [], "the account comes from the deploying credentials (CDK_DEFAULT_ACCOUNT)"
+
+
+# ---- live model mode (opt-in: -c agentProvider=openai) -----------------------------------------------
+
+
+def lambda_env(built: Built) -> dict[str, str]:
+    props = next(
+        r["Properties"]
+        for r in built.backend.find_resources("AWS::Lambda::Function").values()
+        if r["Properties"].get("Handler") == "app.lambda_handler.handler"
+    )
+    return dict(props["Environment"]["Variables"])
+
+
+def test_default_deployment_has_no_live_model_access_code_or_secret_access(dev: Built) -> None:
+    env = lambda_env(dev)
+    assert env["AGENT_PROVIDER"] == "mock"
+    assert not any(k in env for k in ("OPENAI_SECRET_ARN", "ACCESS_SECRET_ARN", "OPENAI_MODEL"))
+    assert len(dev.data.find_resources("AWS::SecretsManager::Secret")) == 1
+
+
+def test_live_mode_adds_an_access_code_and_read_only_access_to_exactly_two_secrets(live: Built) -> None:
+    assert len(live.data.find_resources("AWS::SecretsManager::Secret")) == 2
+    env = lambda_env(live)
+    assert env["AGENT_PROVIDER"] == "openai" and env["OPENAI_MODEL"] == "gpt-4.1-mini"
+    assert {"OPENAI_SECRET_ARN", "ACCESS_SECRET_ARN"} <= set(env)
+    assert int(env["OPENAI_TIMEOUT_SECONDS"]) < 29, "the model call must give up before the Lambda does"
+    assert (env["INVESTIGATIONS_PER_MINUTE"], env["INVESTIGATIONS_PER_HOUR"]) == ("6", "60")
+
+    secret_statements = [
+        s
+        for s in statements(live.backend)
+        if any(a.startswith("secretsmanager:") for a in (s["Action"] if isinstance(s["Action"], list) else [s["Action"]]))
+    ]
+    assert secret_statements, "the function must be able to read the secrets"
+    for s in secret_statements:
+        actions = s["Action"] if isinstance(s["Action"], list) else [s["Action"]]
+        assert set(actions) <= {"secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"}, s
+        assert s["Effect"] == "Allow" and s["Resource"] != "*", s
+        assert len(s["Resource"]) >= 1 if isinstance(s["Resource"], list) else True
+
+
+def test_the_access_code_is_generated_by_secrets_manager_not_written_in_the_template(live: Built) -> None:
+    generated = [
+        r["Properties"]
+        for r in live.data.find_resources("AWS::SecretsManager::Secret").values()
+        if "GenerateSecretString" in r["Properties"]
+    ]
+    assert len(generated) == 1 and generated[0]["GenerateSecretString"]["PasswordLength"] >= 24
+    assert generated[0]["GenerateSecretString"]["ExcludePunctuation"] is True
+    assert "demo-code" not in json.dumps(live.data.to_json())
+
+
+def test_agent_provider_and_model_are_validated() -> None:
+    assert stage_config(_ctx(stage="dev", alertEmail=EMAIL)).agent_provider == "mock"
+    live_cfg = stage_config(_ctx(stage="dev", alertEmail=EMAIL, agentProvider="openai", openaiModel="gpt-4.1-mini"))
+    assert live_cfg.live and live_cfg.openai_model == "gpt-4.1-mini"
+    for bad in ({"agentProvider": "bedrock"}, {"agentProvider": "openai", "openaiModel": "../x"}):
+        with pytest.raises(ConfigError):
+            stage_config(_ctx(stage="dev", alertEmail=EMAIL, **bad))
