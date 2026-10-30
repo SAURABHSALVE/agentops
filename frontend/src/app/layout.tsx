@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "AgentOps AI",
-  description: "AI-assisted incident investigation over simulated demo telemetry.",
+  description: "AI-assisted incident investigation over demo telemetry.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

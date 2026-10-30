@@ -85,7 +85,7 @@ export function IncidentList({ incidents }: { incidents: IncidentSummary[] }) {
       </div>
 
       <p className="mb-2 text-sm text-muted" aria-live="polite">
-        Showing {filtered.length} of {incidents.length} simulated incidents
+        Showing {filtered.length} of {incidents.length} incidents
       </p>
 
       {filtered.length === 0 ? (

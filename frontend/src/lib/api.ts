@@ -29,7 +29,7 @@ export function setAccessCode(code: string): void {
 }
 
 export interface PublicConfig {
-  data_mode: "simulated";
+  data_mode: "simulated" | "captured";
   write_access: "open" | "code_required";
   provider: { kind: "mock" | "openai"; label: string };
 }

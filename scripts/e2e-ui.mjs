@@ -7,6 +7,7 @@
 //
 // It clicks through the real UI against the real API and exits non-zero on the first failed expectation.
 // Env: CHROME (browser path), UI (default http://localhost:3000), SHOTS (directory for screenshots).
+// CAPTURED=1 expects the API to serve the captured lab dataset (see docs/REAL_TELEMETRY.md).
 // --live expects the API to run with AGENT_PROVIDER=openai and only checks properties that hold for a real model.
 
 import { spawn } from "node:child_process";
@@ -139,11 +140,48 @@ try {
     await shot("gated");
     throw new Error("__done__");
   }
+  if (process.env.CAPTURED) {
+    // Run with the API started with TELEMETRY_DATASET=data/captured/lab-capture.json (fresh LOCAL_DATA_DIR).
+    await goto("/");
+    check("dashboard lists only the captured incidents", await waitText("Showing 3 of 3 incidents"));
+    check("header says the data was captured from a lab system", await waitText("captured from a lab system"));
+    let t = await text();
+    check("the three lab incidents are listed", ["INC-2001", "INC-2002", "INC-2003"].every((id) => t.includes(id)) && !t.includes("INC-1001"));
+    await shot("captured-dashboard");
+
+    await goto("/incidents/INC-2001/");
+    check("INC-2001 loads", await waitText("Elevated HTTP 5xx on checkout"));
+    await clickButton("Investigate");
+    check("INC-2001 investigation finishes on real telemetry", await waitText("tool calls.", 90000));
+    t = await text();
+    check("evidence cites ids from the captured logs and metrics", /log-2\d{3}/.test(t) && t.includes("metric:"));
+    check("the evidence mentions the real failing dependency", /payments-gateway/i.test(t));
+    await shot("captured-inc-2001-findings");
+    if (await clickButton("Approve simulated action")) {
+      check("INC-2001 verification passes from measured recovery", await waitText("Passed: incident resolved", 20000));
+      await shot("captured-inc-2001-resolved");
+    } else check("INC-2001 proposed a remediation to approve", false);
+
+    await goto("/incidents/INC-2003/");
+    await waitText("Worker queue backlog growing");
+    await clickButton("Investigate");
+    check("INC-2003 investigation finishes", await waitText("tool calls.", 90000));
+    if (await clickButton("Approve simulated action")) {
+      check("INC-2003: the restart runs but verification FAILS (backlog is still there)", await waitText("FAILED: incident NOT resolved", 20000));
+      t = await text();
+      check("INC-2003 is not shown as resolved", !t.includes("Passed: incident resolved") && !/Resolved/.test(t.split("Investigation")[0]));
+      await shot("captured-inc-2003-not-resolved");
+    } else check("INC-2003 proposed a remediation to approve", false);
+
+    await goto("/incidents/INC-1001/");
+    check("a simulated incident id is not served in captured mode", await waitText("Incident not found", 15000));
+    throw new Error("__done__");
+  }
   // ---- dashboard -------------------------------------------------------------------------
   await goto("/");
-  check("dashboard lists the incidents from the API", await waitText("Showing 6 of 6 simulated incidents"));
+  check("dashboard lists the incidents from the API", await waitText("Showing 6 of 6 incidents"));
+  check("dashboard is labelled as simulated telemetry", await waitText("Simulated demo telemetry"));
   const dash = await text();
-  check("dashboard is labelled as simulated telemetry", dash.includes("Simulated demo telemetry"));
   check("stale Bedrock sentence is gone", !/bedrock/i.test(dash));
   await shot("dashboard");
 
