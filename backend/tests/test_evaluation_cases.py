@@ -222,7 +222,7 @@ def test_nothing_runs_without_an_approval_in_any_investigation(sim: Simulator) -
         executed.append(action_id)
         return real(incident_id, action_id)
 
-    sim.execute_remediation = spy  # type: ignore[method-assign,assignment]
+    sim.execute_remediation = spy  # type: ignore[method-assign]
     client = TestClient(create_app(simulator=sim))
     for iid in ("INC-1001", "INC-1002", "INC-1003", "INC-1004", "INC-1005", "INC-1006"):
         run(client, iid)
