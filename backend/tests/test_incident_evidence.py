@@ -34,7 +34,10 @@ def test_ground_truth_covers_exactly_the_seeded_incidents() -> None:
 def test_clear_incident_failure_logs_contain_expected_evidence(sim: Simulator, iid: str) -> None:
     gt = GROUND_TRUTH[iid]
     res = sim.search_logs(SearchLogsArgs(incident_id=iid, query=FAILURE_PATTERN[iid], limit=50))
-    assert gt.expected_log_ids <= set(res.reference_ids)
+    found = set(res.reference_ids)
+    if iid == "INC-1006":  # its key also counts the WARN backlog lines, which a "503" search does not match
+        found |= set(sim.search_logs(SearchLogsArgs(incident_id=iid, query="queue length", limit=50)).reference_ids)
+    assert gt.expected_log_ids <= found
     assert res.total_matches >= 12
     assert res.reference_ids == [e.id for e in res.entries]  # citable ids == returned entries
 
