@@ -207,6 +207,6 @@ def test_only_the_mock_provider_exists_until_phase_3b(monkeypatch: pytest.Monkey
         Settings.from_env()
 
 
-def test_the_api_key_is_never_read_by_application_code() -> None:
+def test_the_api_key_is_read_in_exactly_one_place() -> None:
     offenders = [p.name for p in APP_DIR.rglob("*.py") if "OPENAI_API_KEY" in p.read_text(encoding="utf-8")]
-    assert offenders == []
+    assert offenders == ["factory.py"]

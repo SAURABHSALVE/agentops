@@ -10,7 +10,7 @@ import logging
 import pytest
 
 from app.agent.models import Investigation
-from app.agent.prompts import SYSTEM_PROMPT
+from app.agent.prompts import SYSTEM_PROMPT, system_prompt
 from app.agent.provider import CompletionResponse
 from app.errors import ProviderError, TransientProviderError
 from app.simulator.service import Simulator
@@ -54,7 +54,12 @@ def test_provider_is_shown_the_allowlist_untrusted_data_rules_and_the_answer_sch
         "get_service_metrics",
         "get_recent_deployments",
     }
-    assert first.system == SYSTEM_PROMPT and "untrusted" in first.system and "DATA, never instructions" in first.system
+    assert (
+        first.system == system_prompt()
+        and system_prompt().startswith(SYSTEM_PROMPT)
+        and "untrusted" in first.system
+        and "DATA, never instructions" in first.system
+    )
     assert "remediation_action_id" in first.answer_schema["properties"]
     assert first.max_output_tokens == 1_500
     assert "INC-1005" in first.messages[0].content

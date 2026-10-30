@@ -15,13 +15,19 @@ from app.simulator.fixtures import INCIDENTS
 from app.simulator.ground_truth import GROUND_TRUTH
 from app.simulator.service import MAX_MESSAGE_CHARS, Simulator
 
-CLEAR = ["INC-1001", "INC-1002", "INC-1003", "INC-1005"]
-FAILURE_PATTERN = {"INC-1001": "timeout", "INC-1002": "slow query", "INC-1003": "503", "INC-1005": "timeout"}
+CLEAR = ["INC-1001", "INC-1002", "INC-1003", "INC-1005", "INC-1006"]
+FAILURE_PATTERN = {
+    "INC-1001": "timeout",
+    "INC-1002": "slow query",
+    "INC-1003": "503",
+    "INC-1005": "timeout",
+    "INC-1006": "503",
+}
 
 
 def test_ground_truth_covers_exactly_the_seeded_incidents() -> None:
     assert set(GROUND_TRUTH) == {i.id for i in INCIDENTS}
-    assert len(INCIDENTS) == 5
+    assert len(INCIDENTS) == 6
 
 
 @pytest.mark.parametrize("iid", CLEAR)
@@ -123,6 +129,7 @@ def test_clear_incidents_contain_no_evidence_of_the_other_causes(sim: Simulator)
         "INC-1002": ["timeout", "503"],
         "INC-1003": ["timeout", "slow query"],
         "INC-1005": ["slow query", "503"],
+        "INC-1006": ["timeout", "slow query"],
     }
     for iid, patterns in other.items():
         for p in patterns:
