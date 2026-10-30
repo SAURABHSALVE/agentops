@@ -1,5 +1,5 @@
-// Shapes follow the planned FastAPI contract (snake_case fields) so Phase 2/3 can swap
-// the mock data for real API responses without a mapping layer.
+// Shapes mirror the FastAPI contract (backend/app/schemas.py and backend/app/agent/models.py).
+// Field names are snake_case on purpose so API responses are used as-is, with no mapping layer.
 
 export type Severity = "critical" | "high" | "medium" | "low";
 export type IncidentStatus = "open" | "investigating" | "mitigated" | "resolved";
@@ -12,10 +12,10 @@ export interface TimelineEvent {
   at: string;
   kind: "incident" | "agent" | "tool" | "approval" | "action" | "verification" | "error";
   title: string;
-  detail?: string;
+  detail?: string | null;
 }
 
-export interface Incident {
+export interface IncidentSummary {
   id: string;
   title: string;
   service: string;
@@ -26,18 +26,24 @@ export interface Incident {
   started_at: string;
   window_end: string;
   updated_at: string;
-  /** Headline signal shown on the detail page, e.g. "5xx rate: 18% (baseline 0.2%)". */
+}
+
+export interface Incident extends IncidentSummary {
   signals: { label: string; value: string }[];
-  /** Events that exist before any investigation. */
   history: TimelineEvent[];
 }
 
 export interface ToolCallRecord {
-  name: "get_incident" | "search_logs" | "get_service_metrics" | "get_recent_deployments";
-  /** Arguments as displayed (already redacted/validated). */
-  args: string;
+  id: string;
+  name: string;
+  /** Validated arguments only. */
+  arguments: Record<string, string | number>;
+  status: "ok" | "error";
+  error_code: string | null;
   duration_ms: number;
   result_summary: string;
+  reference_ids: string[];
+  at: string;
 }
 
 export interface EvidenceItem {
@@ -65,8 +71,52 @@ export interface Findings {
   limitations: string[];
 }
 
-/** One scripted investigation per incident (Phase 1 mock only). */
-export interface MockInvestigation {
+export type InvestigationStatus = "running" | "completed" | "failed";
+
+export interface Failure {
+  code: string;
+  message: string;
+}
+
+export type RemediationStatus =
+  | "proposed"
+  | "rejected"
+  | "executing"
+  | "action_failed"
+  | "resolved"
+  | "not_resolved"
+  | "not_verifiable";
+
+export interface VerificationCheck {
+  metric: string;
+  observed: number;
+  threshold: number;
+  comparison: "lt";
+  passed: boolean;
+}
+
+export interface RemediationState {
+  action_id: string;
+  status: RemediationStatus;
+  decided_at: string | null;
+  executed_at: string | null;
+  verified_at: string | null;
+  action: { status: "executed" | "already_applied"; summary: string; simulated: true } | null;
+  verification: { status: "resolved" | "not_resolved" | "not_verifiable"; checks: VerificationCheck[] } | null;
+  error: string | null;
+}
+
+export interface Investigation {
+  id: string;
+  incident_id: string;
+  status: InvestigationStatus;
+  provider: { kind: "mock" | "openai"; label: string };
+  started_at: string;
+  finished_at: string | null;
   tool_calls: ToolCallRecord[];
-  findings: Findings;
+  findings: Findings | null;
+  failure: Failure | null;
+  remediation_state: RemediationState | null;
+  usage: { rounds: number; tool_calls: number; input_tokens: number; output_tokens: number };
+  simulated: true;
 }

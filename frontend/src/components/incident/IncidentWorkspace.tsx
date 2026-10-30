@@ -1,58 +1,43 @@
 "use client";
 
-import { useEffect, useReducer, useState } from "react";
-import { initialState, reducer } from "@/lib/investigation-reducer";
+import Link from "next/link";
+import NotFound from "@/app/not-found";
 import { formatDateTime, formatWindow } from "@/lib/format";
-import type { Incident, MockInvestigation, TimelineEvent } from "@/lib/types";
+import { useWorkspace } from "@/lib/use-workspace";
 import { SeverityBadge, StatusBadge } from "../badges";
 import { EvidencePanel } from "./EvidencePanel";
 import { InvestigationPanel } from "./InvestigationPanel";
 import { RemediationPanel } from "./RemediationPanel";
 import { Timeline } from "./Timeline";
 
-const STEP_MS = 800;
-const ACTION_MS = 1200;
-const FAIL_AT_TOOL = 2;
+function Skeleton() {
+  return (
+    <div role="status" aria-label="Loading incident" className="space-y-4">
+      <div className="h-32 rounded-lg border border-border bg-surface motion-safe:animate-pulse" />
+      <div className="h-56 rounded-lg border border-border bg-surface motion-safe:animate-pulse" />
+      <span className="sr-only">Loading incident…</span>
+    </div>
+  );
+}
 
-export function IncidentWorkspace({ incident, script }: { incident: Incident; script: MockInvestigation }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
-  const [simulateFailure, setSimulateFailure] = useState(false);
-  const remediation = script.findings.remediation;
-  const actionId = remediation?.action_id ?? "";
+export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
+  const w = useWorkspace(incidentId);
 
-  // Drives the scripted mock flow. Every timer is cleared when the stage changes or the page unmounts.
-  useEffect(() => {
-    const at = () => new Date().toISOString();
-    let timer: ReturnType<typeof setTimeout> | undefined;
+  if (w.load === "loading") return <Skeleton />;
+  if (w.load === "not_found") return <NotFound />;
+  if (w.load === "error" || !w.incident) {
+    return (
+      <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 p-6">
+        <h1 className="text-lg font-semibold text-danger">Could not load this incident</h1>
+        <p className="mt-1 text-sm text-muted">{w.loadError}</p>
+        <Link href="/" className="mt-4 inline-block text-sm underline">
+          Back to incidents
+        </Link>
+      </div>
+    );
+  }
 
-    if (state.stage === "running") {
-      timer = setTimeout(() => {
-        if (simulateFailure && state.toolsDone === FAIL_AT_TOOL) {
-          const tool = script.tool_calls[state.toolsDone].name;
-          dispatch({ type: "fail", at: at(), message: `${tool} timed out after 5000 ms (simulated failure).` });
-        } else if (state.toolsDone < script.tool_calls.length) {
-          dispatch({ type: "tool_done", at: at(), script });
-        } else {
-          dispatch({ type: "complete", at: at(), script });
-        }
-      }, STEP_MS);
-    } else if (state.stage === "executing") {
-      timer = setTimeout(() => dispatch({ type: "action_done", at: at(), actionId }), ACTION_MS);
-    } else if (state.stage === "verifying") {
-      timer = setTimeout(() => dispatch({ type: "verified", at: at() }), ACTION_MS);
-    }
-
-    return () => clearTimeout(timer);
-  }, [state.stage, state.toolsDone, simulateFailure, script, actionId]);
-
-  const status =
-    state.stage === "resolved"
-      ? "resolved"
-      : state.stage === "running" || state.stage === "executing" || state.stage === "verifying"
-        ? "investigating"
-        : incident.status;
-
-  const events: TimelineEvent[] = [...incident.history, ...state.events];
+  const incident = w.incident;
 
   return (
     <div className="space-y-4">
@@ -60,7 +45,7 @@ export function IncidentWorkspace({ incident, script }: { incident: Incident; sc
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-xs text-muted">{incident.id}</span>
           <SeverityBadge severity={incident.severity} />
-          <StatusBadge status={status} />
+          <StatusBadge status={incident.status} />
         </div>
         <h1 className="mt-2 text-xl font-semibold tracking-tight">{incident.title}</h1>
         <p className="mt-1 text-sm text-muted">{incident.summary}</p>
@@ -86,26 +71,24 @@ export function IncidentWorkspace({ incident, script }: { incident: Incident; sc
         </dl>
       </header>
 
+      {w.actionError && (
+        <p role="alert" className="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+          {w.actionError}
+        </p>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <div className="space-y-4">
-          <InvestigationPanel
-            stage={state.stage}
-            toolsDone={state.toolsDone}
-            error={state.error}
-            script={script}
-            simulateFailure={simulateFailure}
-            onSimulateFailureChange={setSimulateFailure}
-            onStart={() => dispatch({ type: "start", at: new Date().toISOString() })}
-          />
-          <EvidencePanel stage={state.stage} findings={script.findings} />
+          <InvestigationPanel investigation={w.investigation} busy={w.busy} onStart={() => void w.start()} />
+          <EvidencePanel investigation={w.investigation} />
           <RemediationPanel
-            stage={state.stage}
-            remediation={remediation}
-            onApprove={() => dispatch({ type: "approve", at: new Date().toISOString(), actionId })}
-            onReject={() => dispatch({ type: "reject", at: new Date().toISOString(), actionId })}
+            investigation={w.investigation}
+            busy={w.busy}
+            onApprove={() => void w.approve()}
+            onReject={() => void w.reject()}
           />
         </div>
-        <Timeline events={events} />
+        <Timeline events={w.timeline} />
       </div>
     </div>
   );

@@ -80,3 +80,9 @@ def test_simulator_works_with_any_repository_implementing_the_protocol() -> None
     assert sim.get_recent_deployments(GetDeploymentsArgs(incident_id="INC-1002")).deployments
     assert sim.execute_remediation("INC-1003", "simulate_restart_worker").status == "executed"
     assert sim.verify_resolution("INC-1003").status == "resolved"
+
+
+def test_frontend_static_export_lists_exactly_the_seeded_incidents() -> None:
+    """The static site enumerates incident pages at build time, so the two lists must not drift."""
+    text = (APP_DIR.parent.parent / "frontend" / "src" / "lib" / "incident-ids.ts").read_text(encoding="utf-8")
+    assert re.findall(r'"(INC-\d{4})"', text) == [i.id for i in INCIDENTS]

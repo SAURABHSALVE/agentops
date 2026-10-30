@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { formatDateTime } from "@/lib/format";
-import type { Incident, IncidentStatus, Severity } from "@/lib/types";
+import type { IncidentStatus, IncidentSummary, Severity } from "@/lib/types";
 import { SeverityBadge, StatusBadge } from "./badges";
 
 const fieldClass =
   "rounded border border-border bg-surface px-2 py-1.5 text-sm text-foreground placeholder:text-muted";
 
-export function IncidentList({ incidents }: { incidents: Incident[] }) {
+export function IncidentList({ incidents }: { incidents: IncidentSummary[] }) {
   const [query, setQuery] = useState("");
   const [severity, setSeverity] = useState<Severity | "all">("all");
   const [status, setStatus] = useState<IncidentStatus | "all">("all");

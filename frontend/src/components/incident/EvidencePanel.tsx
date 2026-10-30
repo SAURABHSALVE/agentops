@@ -1,10 +1,10 @@
-import type { Stage } from "@/lib/investigation-reducer";
-import type { Findings } from "@/lib/types";
+import type { Investigation } from "@/lib/types";
 
 const sourceLabel = { logs: "Logs", metrics: "Metrics", deployments: "Deployments" } as const;
 
-export function EvidencePanel({ stage, findings }: { stage: Stage; findings: Findings }) {
-  const ready = stage !== "idle" && stage !== "running" && stage !== "failed";
+export function EvidencePanel({ investigation }: { investigation: Investigation | null }) {
+  const findings = investigation?.findings ?? null;
+  const status = investigation?.status ?? "none";
 
   return (
     <section aria-labelledby="ev-heading" className="rounded-lg border border-border bg-surface p-4">
@@ -12,11 +12,11 @@ export function EvidencePanel({ stage, findings }: { stage: Stage; findings: Fin
         Findings and evidence
       </h2>
 
-      {!ready ? (
+      {!findings ? (
         <p className="mt-2 text-sm text-muted">
-          {stage === "running" && "Waiting for the investigation to finish…"}
-          {stage === "failed" && "No findings: the investigation failed. Retry it above."}
-          {stage === "idle" && "No findings yet. Run an investigation to see evidence-backed results."}
+          {status === "running" && "Waiting for the investigation to finish…"}
+          {status === "failed" && "No findings: the investigation failed. Re-run it above."}
+          {status === "none" && "No findings yet. Run an investigation to see evidence-backed results."}
         </p>
       ) : (
         <div className="mt-3 space-y-4 text-sm">
