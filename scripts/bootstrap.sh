@@ -38,7 +38,7 @@ npx cdk bootstrap "aws://$account/$AWS_REGION"
 echo; echo "== deploy AgentOps-GitHubOidc (creates IAM roles: CDK will ask you to confirm) =="
 reuse=()
 [ -z "${OIDC_PROVIDER_ARN:-}" ] || reuse=(-c "existingOidcProviderArn=$OIDC_PROVIDER_ARN")
-npx cdk deploy AgentOps-GitHubOidc "${reuse[@]}" --outputs-file "$root/cdk-oidc-outputs.json"
+npx cdk deploy AgentOps-GitHubOidc ${reuse[@]+"${reuse[@]}"} --outputs-file "$root/cdk-oidc-outputs.json"
 
 deploy_arn="$(python -c "import json; print(json.load(open('$root/cdk-oidc-outputs.json'))['AgentOps-GitHubOidc']['DeployRoleArn'])")"
 diff_arn="$(python -c "import json; print(json.load(open('$root/cdk-oidc-outputs.json'))['AgentOps-GitHubOidc']['DiffRoleArn'])")"
