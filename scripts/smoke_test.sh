@@ -29,7 +29,9 @@ if [ "$auth_mode" = "cognito" ]; then
   echo "6/6 sign-in (cannot sign in from CI, so checking everything short of that)"
 
   code="$(status_of -X POST "$base/api/incidents/INC-1001/investigations")"
-  [ "$code" = "401" ] && grep -q '"sign_in_required"' "$body" || fail "a write without signing in should be 401 sign_in_required, got $code"
+  if [ "$code" != "401" ] || ! grep -q '"sign_in_required"' "$body"; then
+    fail "a write without signing in should be 401 sign_in_required, got $code"
+  fi
   code="$(status_of "$base/api/incidents/INC-1001/investigations/latest")"
   [ "$code" = "404" ] || fail "a visitor should see no investigation (404), got $code"
 
@@ -61,7 +63,9 @@ import base64, json
 b = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
 print(b({"alg": "RS256", "kid": "smoke-test"}) + "." + b({"sub": "x"}) + ".c2ln")')"
   code="$(status_of -H "Authorization: Bearer $token" "$base/api/incidents")"
-  [ "$code" = "401" ] && grep -q '"invalid_token"' "$body" || fail "the API could not check a token (got $code); can the Lambda reach Cognito?"
+  if [ "$code" != "401" ] || ! grep -q '"invalid_token"' "$body"; then
+    fail "the API could not check a token (got $code); can the Lambda reach Cognito?"
+  fi
 else
   echo "6/6 run an investigation"
   started="$(curl "${retry[@]}" -X POST "$base/api/incidents/INC-1001/investigations")"
