@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 APP_VERSION = "0.1.0"
+COGNITO_POOL_ID_PATTERN = r"[a-z]{2}(?:-[a-z]+)+-\d_[A-Za-z0-9]{6,32}"
+# https anywhere, plain http only for a local fake issuer; an optional path, never a query or fragment.
+_ISSUER_URL = re.compile(r"(?:https://[A-Za-z0-9.-]+|http://(?:127\.0\.0\.1|localhost))(?::\d+)?(?:/[A-Za-z0-9._-]+)*")
 
 
 class ConfigError(Exception):
@@ -64,6 +67,11 @@ class Settings:
     local_data_dir: str = "./.data"
     # Path to a dataset made by `python -m lab.capture`. Empty (default) serves the built-in simulated incidents.
     telemetry_dataset: str = ""
+    # Amazon Cognito user pool id (e.g. us-east-1_AbCdEf123). Empty (default) means no sign-in: every caller is one
+    # shared anonymous owner, exactly as before. When set, writes need a signed-in user and records are per user.
+    cognito_user_pool_id: str = ""
+    # Test seam: a full issuer URL to use instead of the pool's own (a local fake issuer). Not set in AWS.
+    cognito_issuer_override: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -81,6 +89,14 @@ class Settings:
         table = os.environ.get("DYNAMODB_TABLE", "").strip()
         if storage_mode == "dynamodb" and not table:
             raise ConfigError("DYNAMODB_TABLE is required when STORAGE_MODE=dynamodb.")
+        pool = os.environ.get("COGNITO_USER_POOL_ID", "").strip()
+        if pool and not re.fullmatch(COGNITO_POOL_ID_PATTERN, pool):
+            raise ConfigError("COGNITO_USER_POOL_ID must look like 'us-east-1_AbCdEf123'.")
+        issuer = os.environ.get("COGNITO_ISSUER", "").strip().rstrip("/")
+        if issuer and not _ISSUER_URL.fullmatch(issuer):
+            raise ConfigError("COGNITO_ISSUER must be an https URL (http only for localhost).")
+        if issuer and not pool:
+            raise ConfigError("COGNITO_ISSUER only applies together with COGNITO_USER_POOL_ID.")
         return cls(
             cors_allow_origins=origins,
             agent_provider=provider,
@@ -97,4 +113,6 @@ class Settings:
             dynamodb_table=table,
             local_data_dir=os.environ.get("LOCAL_DATA_DIR", "").strip() or cls.local_data_dir,
             telemetry_dataset=os.environ.get("TELEMETRY_DATASET", "").strip(),
+            cognito_user_pool_id=pool,
+            cognito_issuer_override=issuer,
         )

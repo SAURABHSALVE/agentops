@@ -32,3 +32,7 @@ boto3==1.43.122
 mangum==0.22.0
 # moto has no installable PyYAML wheel on Python 3.15 yet, so the marker skips it there (its tests importorskip).
 moto[dynamodb]==5.2.5; python_version < "3.15"
+cffi==2.1.1
+cryptography==50.0.2
+pycparser==3.12
+PyJWT==2.15.1
