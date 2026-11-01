@@ -9,13 +9,15 @@
 // Env: CHROME (browser path), UI (default http://localhost:3000), SHOTS (directory for screenshots).
 // CAPTURED=1 expects the API to serve the captured lab dataset (see docs/REAL_TELEMETRY.md).
 // --live expects the API to run with AGENT_PROVIDER=openai and only checks properties that hold for a real model.
+// AUTH=1 checks sign-in end to end against a fake Cognito, starting its own API and serving frontend/out
+// (run `npm run build` in frontend/ first); it needs nothing else running. See scripts/e2e-auth-harness.mjs.
 
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const UI = process.env.UI ?? "http://localhost:3000";
+let UI = process.env.UI ?? "http://localhost:3000";
 const LIVE = process.argv.includes("--live");
 const SHOTS = process.env.SHOTS;
 const CANDIDATES = [
@@ -113,6 +115,81 @@ async function shot(name) {
 }
 
 try {
+  if (process.env.AUTH) {
+    const { startHarness, USERS } = await import("./e2e-auth-harness.mjs");
+    const h = await startHarness();
+    UI = h.siteUrl;
+    try {
+      const evalJson = (expr) => evaluate(`(async () => JSON.stringify(await (${expr})))()`).then(JSON.parse);
+      const asVisitor = (method, path) =>
+        evalJson(`fetch(${JSON.stringify(path)}, { method: ${JSON.stringify(method)} }).then(async r => ({ status: r.status, body: await r.json() }))`);
+
+      // ---- a visitor can read, but not write ---------------------------------------------------
+      await goto("/");
+      check("visitor sees the incident list", await waitText("Showing 6 of 6 incidents"));
+      check("header offers sign in", (await text()).includes("Sign in"));
+      await goto("/incidents/INC-1001/");
+      check("incident page loads for a visitor", await waitText("Elevated HTTP 5xx on checkout"));
+      check("investigating asks the visitor to sign in", await waitText("Sign in to investigate"));
+      check("no investigation is shown to a visitor", (await text()).includes("No investigation has been run"));
+      const refused = await asVisitor("POST", "/api/incidents/INC-1001/investigations");
+      check("the API itself refuses an unauthenticated write", refused.status === 401 && refused.body.error.code === "sign_in_required");
+      await shot("auth-signed-out");
+
+      // ---- alice signs in through the hosted page and back -------------------------------------
+      h.state.user = USERS.alice;
+      check("header Sign in starts the hosted flow", await clickButton("Sign in"));
+      check("alice lands back on the incident page, signed in", (await waitText(USERS.alice.email, 20000)) && (await waitText("Elevated HTTP 5xx on checkout", 20000)));
+      await waitText("No investigation has been run", 20000);
+      check("the code was exchanged exactly once", h.state.issued === 1);
+      check("sign-out is offered", (await text()).includes("Sign out"));
+      check("the investigate button replaces the sign-in prompt", (await text()).includes("Investigate") && !(await text()).includes("Sign in to investigate"));
+      await clickButton("Investigate");
+      check("alice's investigation finishes", await waitText("Finished after", 90000));
+      check("alice approves and verification passes", (await clickButton("Approve simulated action")) && (await waitText("Passed: incident resolved", 20000)));
+      await shot("auth-alice-resolved");
+      await goto("/incidents/INC-1001/");
+      check("alice's record survives a reload", (await waitText("Passed: incident resolved", 20000)) && (await text()).includes(USERS.alice.email));
+      await goto("/");
+      await waitText("Showing 6 of 6 incidents");
+      check("the list shows INC-1001 resolved for alice", /INC-1001[\s\S]{0,200}Resolved/i.test(await text()));
+
+      // ---- signing out hides it again ----------------------------------------------------------
+      check("sign out works", await clickButton("Sign out"));
+      check("back at the dashboard, signed out", (await waitText("Showing 6 of 6 incidents", 20000)) && !(await text()).includes(USERS.alice.email));
+      await goto("/incidents/INC-1001/");
+      check("a signed-out visitor sees none of alice's investigation", (await waitText("No investigation has been run", 20000)) && !(await text()).includes("Passed: incident resolved"));
+      check("...and INC-1001 is not resolved for a visitor", !/Resolved/.test((await text()).split("Investigation")[0]));
+
+      // ---- bob is a different person -----------------------------------------------------------
+      h.state.user = USERS.bob;
+      await clickButton("Sign in");
+      check("bob signs in", await waitText(USERS.bob.email, 20000));
+      check("bob does not see alice's investigation", (await waitText("No investigation has been run", 20000)) && !(await text()).includes("Passed: incident resolved"));
+      check("INC-1001 is open for bob", !/Resolved/.test((await text()).split("Investigation")[0]));
+      await clickButton("Investigate");
+      check("bob's own investigation finishes", await waitText("Finished after", 90000));
+      check("bob's approval really runs (alice's did not do it for him)", (await clickButton("Approve simulated action")) && (await waitText("Passed: incident resolved", 20000)));
+      await shot("auth-bob-resolved");
+
+      // ---- a token the server will not accept -------------------------------------------------
+      await evaluate(`(() => { const s = JSON.parse(sessionStorage.getItem("agentops-session")); s.accessToken = "forged.token.value"; sessionStorage.setItem("agentops-session", JSON.stringify(s)); })()`);
+      await goto("/incidents/INC-1001/");
+      check("a rejected token does not break reading: the page still loads", await waitText("Elevated HTTP 5xx on checkout", 20000));
+      check("and the browser drops that sign-in", (await waitText("Sign in to investigate", 20000)) && !(await text()).includes(USERS.bob.email));
+
+      // ---- the callback refuses bad arrivals ----------------------------------------------------
+      await goto("/auth/callback?error=access_denied");
+      check("cancelling at the hosted page is explained", await waitText("Sign-in was cancelled."));
+      await goto("/auth/callback?code=stolen&state=forged");
+      check("a callback without a matching state is refused", await waitText("not valid or was already used"));
+      check("no session came out of it", !(await text()).includes("@example.com"));
+      await shot("auth-callback-refused");
+    } finally {
+      await h.stop();
+    }
+    throw new Error("__done__");
+  }
   if (process.env.API_DOWN) {
     // Run with the API stopped: the UI must say so plainly instead of showing a blank or broken page.
     await goto("/");

@@ -75,6 +75,9 @@ const ERROR_HELP: Record<string, string> = {
   network_error: "We could not reach the server. Check your connection and try again.",
   rate_limited: "Too many investigations in a short time. Wait a minute and try again.",
   unauthorized: "That action needs the access code. Enter it above and try again.",
+  sign_in_required: "Sign in to run investigations, approve actions and leave feedback.",
+  invalid_token: "Your sign-in has expired. Sign in again to continue.",
+  auth_unavailable: "Sign-in is temporarily unavailable. Try again in a minute.",
   investigation_in_progress: "An investigation is already running for this incident. It will update here when done.",
 };
 

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AccountMenu } from "./AccountMenu";
 import { DataModeBadge } from "./DataModeBadge";
 
 export function AppHeader() {
@@ -8,7 +9,10 @@ export function AppHeader() {
         <Link href="/" className="text-base font-semibold tracking-tight">
           AgentOps AI
         </Link>
-        <DataModeBadge />
+        <div className="flex flex-wrap items-center gap-3">
+          <DataModeBadge />
+          <AccountMenu />
+        </div>
       </div>
     </header>
   );

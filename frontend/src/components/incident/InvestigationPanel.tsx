@@ -1,11 +1,14 @@
 import { failureHelp, toolSentence } from "@/lib/plain";
 import type { Investigation } from "@/lib/types";
+import type { AuthState } from "@/lib/use-auth";
 import type { Busy } from "@/lib/use-workspace";
 
 interface Props {
   investigation: Investigation | null;
   busy: Busy;
   onStart: () => void;
+  auth: AuthState;
+  onSignIn: () => void;
 }
 
 function formatArgs(args: Record<string, string | number>): string {
@@ -14,7 +17,7 @@ function formatArgs(args: Record<string, string | number>): string {
     .join(", ");
 }
 
-export function InvestigationPanel({ investigation, busy, onStart }: Props) {
+export function InvestigationPanel({ investigation, busy, onStart, auth, onSignIn }: Props) {
   const running = investigation?.status === "running" || busy === "starting";
   const label = running ? "Investigating…" : investigation ? "Re-run investigation" : "Investigate";
   const tokens = investigation ? investigation.usage.input_tokens + investigation.usage.output_tokens : 0;
@@ -25,15 +28,36 @@ export function InvestigationPanel({ investigation, busy, onStart }: Props) {
         <h2 id="inv-heading" className="font-semibold">
           Investigation
         </h2>
-        <button
-          type="button"
-          onClick={onStart}
-          disabled={running || busy !== null}
-          className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {label}
-        </button>
+        {auth.status === "signed_out" || auth.status === "unavailable" ? (
+          <button
+            type="button"
+            onClick={onSignIn}
+            disabled={auth.status === "unavailable"}
+            className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Sign in to investigate
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onStart}
+            disabled={running || busy !== null || auth.status === "loading"}
+            className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {label}
+          </button>
+        )}
       </div>
+
+      {auth.status === "signed_out" && (
+        <p className="mt-2 text-sm text-muted">
+          Anyone can read the incidents. Sign in with your email to run an investigation: what you run, approve and
+          rate is private to your account.
+        </p>
+      )}
+      {auth.status === "unavailable" && (
+        <p className="mt-2 text-sm text-muted">Sign-in is required here but is not set up on this site.</p>
+      )}
 
       <p role="status" className="mt-2 text-sm text-muted">
         {!investigation && !running && "No investigation has been run for this incident."}
