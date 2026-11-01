@@ -239,6 +239,19 @@ sequenceDiagram
   `allow_iam_changes` after reviewing the diff.
 - Third-party actions are pinned to commit SHAs; Dependabot proposes updates weekly.
 
+### Turning AWS deploys on
+The two jobs that talk to AWS (the pull-request `cdk diff` and the production deploy) run only when the repository variable
+`AWS_DEPLOY_ENABLED` is `true`. Until then they are skipped and a small job says so in the run summary, while every lint,
+type, test, synth and build check still runs and still gates changes. Merging to `main` does **not** deploy while it is off.
+
+1. Sign in as an admin **user or role, never root**, from your own terminal: `aws login --profile admin`.
+2. Update the account-level OIDC stack so its roles trust GitHub's immutable subject (see D-032):
+   `cd infra`, `set AWS_PROFILE=admin`, `npx cdk diff AgentOps-GitHubOidc` (expect only the two roles' trust conditions to
+   change), then `npx cdk deploy AgentOps-GitHubOidc`.
+3. `gh variable set AWS_DEPLOY_ENABLED --body true -R SAURABHSALVE/agentops`.
+4. Re-run the pull request's checks (the diff job now runs), merge, and watch the Deploy run and its smoke test.
+If the Deploy job ever fails at "configure-aws-credentials", see the trust-policy note above.
+
 ## Operations
 - **Alarms** (`agentops-<stage>-*`): Lambda errors, Lambda throttles, **API 5xx**, and p95 duration above 80% of the timeout.
   API 5xx is separate on purpose: the app turns unexpected exceptions into a JSON 500, which Lambda counts as a success.
