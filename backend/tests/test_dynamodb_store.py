@@ -153,6 +153,7 @@ def test_the_api_runs_an_investigation_end_to_end_on_dynamodb(
 
 
 def test_storage_mode_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("STORAGE_MODE", raising=False)  # conftest pins "memory" for the rest of the suite
     assert Settings.from_env().storage_mode == "local"
     monkeypatch.setenv("STORAGE_MODE", "dynamodb")
     with pytest.raises(ConfigError):
