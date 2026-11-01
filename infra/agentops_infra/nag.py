@@ -1,7 +1,7 @@
 """cdk-nag (AWS Solutions rules) runs on every synth. Each acknowledgement below says why it is accepted;
 anything not listed here fails the build."""
 
-from aws_cdk import Acknowledgment, Validations
+from aws_cdk import Acknowledgment, Token, Validations
 from constructs import IConstruct
 
 from agentops_infra.backend_stack import BackendStack
@@ -76,6 +76,9 @@ def acknowledge_frontend(stack: FrontendStack) -> None:
     # CDK-owned helper function behind BucketDeployment: its role, scoped by the construct to this stack's bucket,
     # the CDK asset bucket (read) and CloudFront invalidations (which cannot be scoped to a distribution).
     helper = "the BucketDeployment helper"
+    # cdk-nag spells the account as it appears in the template: a placeholder while the account is unknown
+    # (tests, `cdk synth` without credentials) but the real number in a deploy. Acknowledge whichever applies.
+    account = "<AWS::AccountId>" if Token.is_unresolved(stack.account) else stack.account
     for rule, reason in (
         ("AwsSolutions-L1", f"The runtime of {helper} is chosen by CDK, not by this project."),
         (_BASIC_EXECUTION, f"AWS-managed logs-only policy on {helper}."),
@@ -85,7 +88,7 @@ def acknowledge_frontend(stack: FrontendStack) -> None:
         ("AwsSolutions-IAM5[Action::s3:Abort*]", f"Multipart cleanup on the site bucket, in {helper}."),
         ("AwsSolutions-IAM5[Action::s3:DeleteObject*]", f"Pruning stale files from the site bucket, in {helper}."),
         (
-            "AwsSolutions-IAM5[Resource::arn:aws:s3:::cdk-hnb659fds-assets-<AWS::AccountId>-us-east-1/*]",
+            f"AwsSolutions-IAM5[Resource::arn:aws:s3:::cdk-hnb659fds-assets-{account}-us-east-1/*]",
             f"Read of this account's CDK asset bucket, in {helper}.",
         ),  # fmt: skip
         ("AwsSolutions-IAM5[Resource::<SiteE53D7754.Arn>/*]", f"Objects of the site bucket only, in {helper}."),

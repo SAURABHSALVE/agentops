@@ -98,6 +98,12 @@ jobs:
       # Every cdk-nag finding is an error under --strict unless it is acknowledged (with a reason) in nag.py.
       - run: npx cdk synth -c stage=dev -c alertEmail=ci@example.com --strict --quiet
       - run: npx cdk synth -c stage=prod -c alertEmail=ci@example.com --strict --quiet
+      # A real deploy knows its account id, and cdk-nag words its findings differently once it does. Without this
+      # step that difference is only found halfway through a production deploy.
+      - name: cdk synth with a concrete account id (what a deploy sees)
+        run: npx cdk synth -c stage=prod -c alertEmail=ci@example.com --strict --quiet
+        env:
+          CDK_DEFAULT_ACCOUNT: "123456789012"
 
   scripts:
     name: Shell scripts (shellcheck, teardown safety tests)
