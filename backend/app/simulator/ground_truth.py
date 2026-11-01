@@ -67,4 +67,13 @@ GROUND_TRUTH: dict[str, GroundTruth] = {
         expected_remediation="simulate_clear_dependency_fault",
         max_confidence="high",
     ),
+    "INC-1006": GroundTruth(
+        incident_id="INC-1006",
+        root_cause_category="downstream_failure",
+        expected_log_ids=frozenset(f"log-{n}" for n in range(602, 654)),  # ERROR retries and the WARN backlog lines
+        expected_metric_ref="metric:queue_depth:10:45-11:40",
+        expected_deployment_ref="deploys:worker-service:6h",
+        expected_remediation="simulate_restart_worker",
+        max_confidence="high",
+    ),
 }

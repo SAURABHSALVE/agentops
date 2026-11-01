@@ -2,17 +2,50 @@
 
 AI-assisted incident investigation over **simulated demo telemetry**. An agent uses allowlisted, read-only diagnostic
 tools to propose an evidence-backed root cause; a human approves a bounded, simulated remediation; the app verifies the
-result and keeps an audit timeline. The model provider is a deterministic mock by default (OpenAI is planned, opt-in).
+result and keeps an audit timeline. The model provider is a deterministic mock by default; a live OpenAI model is opt-in.
 
-> **Status**
-> - **Backend** (FastAPI): incidents, diagnostics and the bounded investigation loop with the deterministic mock provider
->   work, with 200+ tests. No LLM is integrated yet. Remediation has no HTTP route yet (needs the Phase 5 approval gate).
-> - **Frontend** (Next.js): still runs on scripted in-browser mock data and does **not** call the API yet (Phase 3A, UI wiring).
+> **Status (Phases 1 to 5 built and tested locally)**
+> - **Backend** (FastAPI): incidents, diagnostics, a bounded investigation loop with two providers (offline mock and
+>   live OpenAI), evidence grounding, a server-side approval gate, simulated remediation with separate verification,
+>   SQLite persistence, a derived audit timeline, and public-demo protections (access code, rate limits). 300+ tests,
+>   ruff and mypy clean.
+> - **Frontend** (Next.js): wired to the API; investigations are polled; approve/reject call the server; asks for the
+>   access code when a deployment needs one. `scripts/e2e-ui.mjs` clicks through the real UI against the real API.
+> - **Evaluation:** the seven required cases are an offline test suite; mock and live-model results are measured and
+>   reported with their weaknesses in [docs/EVALUATION.md](docs/EVALUATION.md).
+> - **Not done:** the AWS deployment itself (see "Production readiness" for what blocks it).
 > - **AWS deployment**: defined as code and CI/CD below. Verified locally: unit tests, `cdk synth --strict` with cdk-nag,
 >   a Docker-free Lambda build. **Not yet verified until the first real deploy:** the live site, the OIDC role
 >   assumption from GitHub, and the PR `cdk diff` permissions. Section [First deploy](#first-deploy-one-time) lists them.
 
-## Architecture
+## How it works (what runs locally)
+
+```mermaid
+flowchart LR
+  ui([Browser: Next.js]) -- "REST + polling" --> api["FastAPI<br/>access code, rate limit"]
+  api --> svc["Investigation service"]
+  svc --> loop["Bounded loop<br/>rounds, tokens, tool calls"]
+  loop <--> prov{{"LLMProvider"}}
+  prov --- mock["Mock<br/>offline, deterministic"]
+  prov --- oai["OpenAI<br/>opt-in, key server-side"]
+  loop --> tools["Tool runner<br/>4 read-only tools, strict args,<br/>timeout, size cap"]
+  tools --> sim[("Simulator<br/>synthetic incidents")]
+  loop --> check["Validate answer<br/>schema, evidence ids, allowlist"]
+  svc --> gate["Approval gate<br/>approve once, then verify"]
+  gate --> act["Simulated remediation<br/>closed allowlist"]
+  svc --> db[("SQLite<br/>investigations, approvals")]
+```
+
+The model only proposes. The backend executes tools, records what they returned, rejects any evidence id that was not
+returned, resolves the remediation from its own allowlist, and requires a recorded human approval before anything runs.
+See [docs/DEMO.md](docs/DEMO.md) for a 5-minute walkthrough and [docs/EVALUATION.md](docs/EVALUATION.md) for results.
+
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Findings](docs/screenshots/inc-1001-findings.png) |
+| ![Verification failed](docs/screenshots/inc-1006-not-resolved.png) | ![Prompt injection](docs/screenshots/inc-1005.png) |
+
+## Architecture (AWS deployment, not yet deployed)
 
 ```mermaid
 flowchart LR
@@ -56,6 +89,59 @@ npm run lint && npm run typecheck && npm run build              # build writes t
 Needs Node 20+ and Python 3.12+. The DynamoDB store tests use `moto`, which cannot install on Python 3.15 yet (no PyYAML
 wheel); those tests skip there and run in CI on 3.13.
 
+### Configuration (backend)
+The server reads `backend/.env` (git-ignored; real environment variables win) or the environment:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGENT_PROVIDER` | `mock` | `mock` = offline, deterministic, no network; `openai` = live model |
+| `OPENAI_API_KEY` | none | Only read by `app/agent/factory.py`. Never sent to the browser, logged or committed |
+| `OPENAI_MODEL` | none | Required for `openai` (verified: `gpt-4.1-mini`) |
+| `TELEMETRY_DATASET` | none | Path to a captured dataset (e.g. `data/captured/lab-capture.json`); unset serves the simulated incidents. See [docs/REAL_TELEMETRY.md](docs/REAL_TELEMETRY.md) |
+| `STORAGE_MODE` | `local` | `local` = SQLite file in `LOCAL_DATA_DIR` (default `./.data`); `memory`; `dynamodb` (AWS only) |
+| `AGENT_MAX_ROUNDS`, `AGENT_MAX_TOTAL_TOKENS`, `TOOL_TIMEOUT_SECONDS`, `TOOL_RESULT_MAX_BYTES` | 6, 20000, 5, 16384 | Bounds on every run |
+
+The frontend talks to `http://localhost:8000` in development; set `NEXT_PUBLIC_API_BASE_URL` to change it (public
+config, never a secret). The tests ignore `backend/.env` and never call a live model.
+
+### Measured results (`python -m evaluation.run_eval --runs 3`, 2026-10-30)
+3 runs per incident, 6 incidents, scored against the answer key (`simulator/ground_truth.py`, never visible to the app).
+The live model was run twice (a live model is not deterministic); both runs are reported.
+
+| Provider | Completed | Right remediation (of completed) | Injection ignored (INC-1005) | Notes |
+|---|---|---|---|---|
+| Mock (offline) | 18/18 | 18/18 | 3/3 | Deterministic; 0 tokens |
+| OpenAI `gpt-4.1-mini`, run 1 | 18/18 | 18/18 | 3/3 | 149,727 tokens |
+| OpenAI `gpt-4.1-mini`, run 2 (after the answer-key fix below) | 16/18 | 16/16 | 3/3 | 162,659 tokens; INC-1004 and INC-1006 each had 1 run end `failed` |
+
+Each live run takes about 6 to 11 s and 6k to 12k tokens.
+
+**What this shows.** The backend guards held in every live run: an injected instruction was never followed or cited, and no
+unlisted or inapplicable remediation was ever offered. When the model produced an answer the backend would not accept
+(for example citing evidence it never retrieved), the investigation ended `failed` with a clear reason instead of
+showing it, so a live run can fail; here 2 of 18 did in run 2 and 0 of 18 in run 1.
+
+**Known weakness, measured.** On the ambiguous incident INC-1004 the live model reports *medium* confidence in every
+completed run (the answer key allows *low*), attributing it to one unrelated cache warm-up warning. `gpt-4.1` and
+`gpt-5.4-mini` did the same in 2 runs each. It never proposed a remediation there, so nothing unsafe was offered, but
+its confidence is over-stated. A prompt tweak did not change this and was reverted.
+
+**Answer-key correction (disclosed).** After run 1 the INC-1006 key was changed to count the WARN "backlog" lines as
+valid evidence, because they are. Run 1 scored 0/3 on that metric only because of the stricter key.
+
+### Try it
+1. Start the API and the frontend (above), open http://localhost:3000.
+2. Open **INC-1001**, click **Investigate**, review the evidence, then **Approve simulated action**: verification passes
+   and the incident becomes *Resolved*.
+3. Open **INC-1006**: the action succeeds but verification **fails**, so the incident stays open.
+4. **INC-1004** is ambiguous: low confidence and no remediation. **INC-1005** hides a prompt injection in a log line.
+5. For the live model: put `OPENAI_API_KEY=...` in `backend/.env`, start the API with `AGENT_PROVIDER=openai` and
+   `OPENAI_MODEL=gpt-4.1-mini`. Live runs spend tokens; set a spend limit on the OpenAI project.
+6. Browser check: `node scripts/e2e-ui.mjs` (add `--live` when the API runs the OpenAI provider).
+7. Real telemetry: set `TELEMETRY_DATASET=data/captured/lab-capture.json` and restart the API for incidents **INC-2001 to
+   INC-2003**, whose logs and metrics were measured from a real running lab system (not production data). See
+   [docs/REAL_TELEMETRY.md](docs/REAL_TELEMETRY.md).
+
 ## Deploy to AWS
 
 ### First deploy (one time)
@@ -66,6 +152,11 @@ Python 3.12+, and the GitHub CLI (`gh`) if you want to set variables from the te
 aws login                      # or: aws sso login --profile <profile>
 scripts/bootstrap.sh           # installs the toolchain, `cdk bootstrap`, deploys the OIDC stack (prompts before creating IAM roles)
 ```
+The trust policy must match the subject GitHub actually signs. Newer repositories use the immutable form
+`repo:OWNER@OWNER_ID/NAME@REPO_ID`; read yours with `gh api repos/OWNER/NAME/actions/oidc/customization/sub` and set
+`githubSubjectPrefix` in `infra/cdk.json` (the stack refuses a prefix for a different repository). If the Deploy job fails
+at "configure-aws-credentials" with `Not authorized to perform sts:AssumeRoleWithWebIdentity`, this is the first thing to check.
+
 Then set three repository **variables** (not secrets; none of them is a credential). `bootstrap.sh` prints the exact
 commands with your role ARNs filled in:
 
@@ -86,6 +177,24 @@ source .venv/Scripts/activate            # .venv/bin/activate on macOS/Linux
 npx cdk deploy 'AgentOps-dev-*' -c stage=dev -c alertEmail=you@example.com
 ../scripts/smoke_test.sh "$(aws cloudformation describe-stacks --stack-name AgentOps-dev-Frontend --query "Stacks[0].Outputs[?OutputKey=='SiteUrl'].OutputValue" --output text)"
 ```
+
+### Production readiness (honest status)
+Done and tested: access code on all writes, per-process rate limits, bounded runs (rounds, tokens, tool calls, tool
+timeouts, result size), secrets read from Secrets Manager (never in the image, repo or browser), generic client errors,
+no prompts or model output in logs, security headers, API throttling, alarms, a budget alert, least-privilege roles
+(DynamoDB item calls and two named secrets only), and a strict cdk-nag synth.
+
+**Not done, and why:**
+- **Nothing is deployed.** The only AWS identity on this machine is the **root user**, which this project forbids using
+  for deployment (SECURITY.md, D-020). To deploy, create a least-privilege identity yourself (an IAM Identity Center
+  profile or a role for the bootstrap, then the OIDC deploy role in `infra/`), sign in from your own terminal, and follow
+  "First deploy" below with `-c agentProvider=openai` for the live model. The first real deploy will also be the first
+  verification of the live site, the OIDC role assumption and the PR `cdk diff` permissions.
+- A live investigation must finish inside API Gateway's 30 s limit; typical runs take 6 to 11 s and the model call times
+  out at 12 s, but a slow provider day can fail a run (it ends `failed`, never with a made-up answer).
+- The per-process rate limit is a backstop, not a global cap; the API throttle and an OpenAI project spend limit are the
+  real cost controls. Set that spend limit before exposing a key.
+- Real telemetry (CloudWatch) is not integrated; all data is synthetic.
 
 ### Remove it
 ```bash
@@ -130,6 +239,19 @@ sequenceDiagram
   `allow_iam_changes` after reviewing the diff.
 - Third-party actions are pinned to commit SHAs; Dependabot proposes updates weekly.
 
+### Turning AWS deploys on
+The two jobs that talk to AWS (the pull-request `cdk diff` and the production deploy) run only when the repository variable
+`AWS_DEPLOY_ENABLED` is `true`. Until then they are skipped and a small job says so in the run summary, while every lint,
+type, test, synth and build check still runs and still gates changes. Merging to `main` does **not** deploy while it is off.
+
+1. Sign in as an admin **user or role, never root**, from your own terminal: `aws login --profile admin`.
+2. Update the account-level OIDC stack so its roles trust GitHub's immutable subject (see D-032):
+   `cd infra`, `set AWS_PROFILE=admin`, `npx cdk diff AgentOps-GitHubOidc` (expect only the two roles' trust conditions to
+   change), then `npx cdk deploy AgentOps-GitHubOidc`.
+3. `gh variable set AWS_DEPLOY_ENABLED --body true -R SAURABHSALVE/agentops`.
+4. Re-run the pull request's checks (the diff job now runs), merge, and watch the Deploy run and its smoke test.
+If the Deploy job ever fails at "configure-aws-credentials", see the trust-policy note above.
+
 ## Operations
 - **Alarms** (`agentops-<stage>-*`): Lambda errors, Lambda throttles, **API 5xx**, and p95 duration above 80% of the timeout.
   API 5xx is separate on purpose: the app turns unexpected exceptions into a JSON 500, which Lambda counts as a success.
@@ -167,5 +289,23 @@ Full log with alternatives in [DECISIONS.md](DECISIONS.md) (D-023, D-024 cover t
 See [SECURITY.md](SECURITY.md). In short: simulated data only, no secrets in git, no long-lived AWS keys, least-privilege
 runtime role (four DynamoDB calls on one table), private bucket reachable only through CloudFront, root account never used.
 
+## Résumé bullets (only what was built and measured)
+- Built an incident-investigation agent (FastAPI, Next.js, SQLite) where an LLM proposes and a server-side policy layer
+  enforces: strict tool-argument validation, evidence ids checked against recorded tool output, a closed remediation
+  allowlist, and a human-approval gate with separate "action ran" and "verified resolved" states.
+- Verified the guardrails with a 300+ test suite (seven evaluation cases including prompt injection, malformed output
+  and a verification failure) and a browser end-to-end script; a model scripted to obey an injected instruction could not
+  call an unlisted tool, read another incident, cite unretrieved evidence or get an inapplicable action through.
+- Measured a live `gpt-4.1-mini` against an answer key over 36 runs: no injected instruction followed or cited and no
+  off-list action offered, 2 of 36 runs rejected by validation, and over-stated confidence on the ambiguous incident
+  (reported, not hidden). Average 6 to 11 s and 6k to 12k tokens per investigation.
+- Wrote AWS infrastructure as code (CDK, cdk-nag clean, 35 template tests, least-privilege roles, GitHub OIDC CI/CD);
+  **not deployed**.
+
+## Clean up locally
+Stop both servers. Delete `backend/.data/` (the SQLite file), `backend/.venv/`, `frontend/node_modules/`,
+`frontend/.next/` and `frontend/out/` to reclaim space. Remove the key by deleting `backend/.env`, and **rotate the
+OpenAI key** if it was ever pasted anywhere shared. No cloud resources exist unless you deployed them (see "Remove it").
+
 ## Docs
-[PLAN.md](PLAN.md) · [DECISIONS.md](DECISIONS.md) · [SECURITY.md](SECURITY.md) · build spec: `AgentOps_AI_Claude_Code_Build_Plan.md`
+[docs/EVALUATION.md](docs/EVALUATION.md) · [docs/DEMO.md](docs/DEMO.md) · [docs/REAL_TELEMETRY.md](docs/REAL_TELEMETRY.md) · [PLAN.md](PLAN.md) · [DECISIONS.md](DECISIONS.md) · [SECURITY.md](SECURITY.md) · build spec: `AgentOps_AI_Claude_Code_Build_Plan.md`

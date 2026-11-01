@@ -22,9 +22,27 @@ jobs:
   checks:
     uses: ./.github/workflows/checks.yml
 
+  aws-not-enabled:
+    name: AWS jobs are off (production deploy)
+    # Visible on purpose: a skipped AWS job must never be mistaken for a passing one.
+    if: vars.AWS_DEPLOY_ENABLED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: |
+          echo "::notice title=AWS jobs are off::production deploy did not run because the repository variable AWS_DEPLOY_ENABLED is not 'true'. The real checks above still ran. See README, 'Turning AWS deploys on'."
+          {
+            echo '### AWS jobs are off'
+            echo 'The production deploy did **not** run: `AWS_DEPLOY_ENABLED` is not `true`.'
+            echo 'The lint, type, test and build checks above are unaffected and still gate this change.'
+            echo 'To turn it on: update the OIDC stack, then set the variable (README, "Turning AWS deploys on").'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   deploy:
     name: Deploy production
     needs: checks
+    # Off until the account's OIDC roles trust this repository; set AWS_DEPLOY_ENABLED=true to turn it on (README).
+    if: vars.AWS_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

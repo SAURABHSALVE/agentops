@@ -29,7 +29,7 @@ def test_list_incidents_returns_summaries(client: TestClient) -> None:
     r = client.get("/api/incidents")
     assert r.status_code == 200
     items: list[dict[str, Any]] = r.json()
-    assert [i["id"] for i in items] == ["INC-1001", "INC-1002", "INC-1003", "INC-1004", "INC-1005"]
+    assert [i["id"] for i in items] == ["INC-1001", "INC-1002", "INC-1003", "INC-1004", "INC-1005", "INC-1006"]
     assert all("history" not in i and "signals" not in i for i in items)
     assert items[0]["started_at"] == "2026-10-28T09:12:00Z"
 
@@ -93,14 +93,23 @@ def test_deployments_endpoint(client: TestClient) -> None:
     assert client.get("/api/incidents/INC-1002/deployments", params={"hours": 25}).status_code == 422
 
 
-def test_no_remediation_or_write_routes_are_exposed(client: TestClient) -> None:
+WRITE_ROUTES = {
+    "/api/incidents/{incident_id}/investigations",
+    "/api/investigations/{investigation_id}/remediation/approve",
+    "/api/investigations/{investigation_id}/remediation/reject",
+}
+
+
+def test_the_only_write_routes_are_start_approve_and_reject_and_none_takes_a_body(client: TestClient) -> None:
     paths = client.get("/openapi.json").json()["paths"]
     for path, ops in paths.items():
-        # Starting an investigation is the only write; it runs read-only tools and changes nothing else.
-        allowed = {"get", "post"} if path == "/api/incidents/{incident_id}/investigations" else {"get"}
-        assert set(ops) <= allowed, f"unexpected write method on {path}"
-        assert "remediat" not in path and "approve" not in path
+        assert set(ops) <= ({"get", "post"} if path in WRITE_ROUTES else {"get"}), f"unexpected write on {path}"
+        if "post" in ops:
+            assert "requestBody" not in ops["post"], f"{path} must not accept a body"
+    assert WRITE_ROUTES <= set(paths)
+    # There is no way to name an action or run one directly.
     assert client.post("/api/incidents/INC-1001/remediation", json={}).status_code in (404, 405)
+    assert client.post("/api/remediation/simulate_restart_worker").status_code in (404, 405)
 
 
 def test_answer_key_never_appears_in_responses(client: TestClient) -> None:

@@ -12,10 +12,12 @@ from app.schemas import (
     IncidentSummary,
     SearchLogsArgs,
 )
+from app.simulator.captured import CapturedSource
 from app.simulator.fixtures import INCIDENTS
 from app.simulator.service import Simulator
 
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
+CAPTURED_DATASET = APP_DIR.parent / "data" / "captured" / "lab-capture.json"
 # `re.compile(` is legitimate; only the bare builtin compile() is forbidden.
 FORBIDDEN = re.compile(
     r"\b(subprocess|os\.system|os\.popen|os\.exec\w*|pty|ctypes|__import__)\b|\beval\(|\bexec\(|(?<![\w.])compile\("
@@ -74,9 +76,17 @@ class DictRepository:
 def test_simulator_works_with_any_repository_implementing_the_protocol() -> None:
     repo: IncidentRepository = DictRepository()  # mypy checks the Protocol is satisfied
     sim = Simulator(repo)
-    assert len(sim.list_incidents()) == 5
+    assert len(sim.list_incidents()) == 6
     assert sim.get_incident(GetIncidentArgs(incident_id="INC-1003")).service == "worker-service"
     assert sim.search_logs(SearchLogsArgs(incident_id="INC-1003", query="503", limit=1)).returned == 1
     assert sim.get_recent_deployments(GetDeploymentsArgs(incident_id="INC-1002")).deployments
     assert sim.execute_remediation("INC-1003", "simulate_restart_worker").status == "executed"
     assert sim.verify_resolution("INC-1003").status == "resolved"
+
+
+def test_frontend_static_export_lists_exactly_the_seeded_incidents() -> None:
+    """The static site enumerates incident pages at build time, so the two lists must not drift.
+    It covers the simulated incidents first, then the ones in the captured lab dataset."""
+    text = (APP_DIR.parent.parent / "frontend" / "src" / "lib" / "incident-ids.ts").read_text(encoding="utf-8")
+    captured = [i.id for i in CapturedSource.load(CAPTURED_DATASET).incidents()]
+    assert re.findall(r'"(INC-\d{4})"', text) == [i.id for i in INCIDENTS] + captured

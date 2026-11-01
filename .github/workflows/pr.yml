@@ -16,11 +16,28 @@ jobs:
   checks:
     uses: ./.github/workflows/checks.yml
 
+  aws-not-enabled:
+    name: AWS jobs are off (cdk diff)
+    # Visible on purpose: a skipped AWS job must never be mistaken for a passing one.
+    if: vars.AWS_DEPLOY_ENABLED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: |
+          echo "::notice title=AWS jobs are off::cdk diff did not run because the repository variable AWS_DEPLOY_ENABLED is not 'true'. The real checks above still ran. See README, 'Turning AWS deploys on'."
+          {
+            echo '### AWS jobs are off'
+            echo 'The read-only cdk diff did **not** run: `AWS_DEPLOY_ENABLED` is not `true`.'
+            echo 'The lint, type, test and build checks above are unaffected and still gate this change.'
+            echo 'To turn it on: update the OIDC stack, then set the variable (README, "Turning AWS deploys on").'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   diff:
     name: cdk diff (production, read-only)
     needs: checks
     # Pull requests from forks get no OIDC token (and must not get one), so only same-repo branches diff.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # AWS_DEPLOY_ENABLED is set only once the account's OIDC roles trust this repository (see README).
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.AWS_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

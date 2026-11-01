@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
-from app.schemas import IncidentId
+from app.schemas import ActionResult, IncidentId, VerificationResult
 
 Confidence = Literal["low", "medium", "high"]
 EvidenceSource = Literal["logs", "metrics", "deployments"]
@@ -122,6 +122,30 @@ class Failure(_Model):
     message: str
 
 
+RemediationStatus = Literal[
+    "proposed",  # waiting for a human decision
+    "rejected",  # a human declined; nothing ran
+    "executing",  # approved; the simulated action is running (transient)
+    "action_failed",  # approved, but the simulated action itself could not run
+    "resolved",  # action ran AND verification passed
+    "not_resolved",  # action ran but verification FAILED: the incident is not fixed
+    "not_verifiable",  # action ran but this incident has no verification checks
+]
+
+
+class RemediationRecord(_Model):
+    """Server-held approval state. The action id comes from the validated findings, never from a client."""
+
+    action_id: str
+    status: RemediationStatus = "proposed"
+    decided_at: AwareDatetime | None = None
+    executed_at: AwareDatetime | None = None
+    verified_at: AwareDatetime | None = None
+    action: ActionResult | None = None
+    verification: VerificationResult | None = None
+    error: str | None = None
+
+
 class Investigation(_Model):
     id: InvestigationId
     incident_id: IncidentId
@@ -132,5 +156,6 @@ class Investigation(_Model):
     tool_calls: list[ToolCallRecord] = []
     findings: Findings | None = None
     failure: Failure | None = None
+    remediation_state: RemediationRecord | None = None
     usage: Usage = Usage()
     simulated: Literal[True] = True

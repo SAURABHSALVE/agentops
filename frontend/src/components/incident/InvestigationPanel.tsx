@@ -1,29 +1,22 @@
-import type { Stage } from "@/lib/investigation-reducer";
-import type { MockInvestigation } from "@/lib/types";
+import type { Investigation } from "@/lib/types";
+import type { Busy } from "@/lib/use-workspace";
 
 interface Props {
-  stage: Stage;
-  toolsDone: number;
-  error: string | null;
-  script: MockInvestigation;
-  simulateFailure: boolean;
-  onSimulateFailureChange: (value: boolean) => void;
+  investigation: Investigation | null;
+  busy: Busy;
   onStart: () => void;
 }
 
-export function InvestigationPanel({
-  stage,
-  toolsDone,
-  error,
-  script,
-  simulateFailure,
-  onSimulateFailureChange,
-  onStart,
-}: Props) {
-  const running = stage === "running";
-  const started = stage !== "idle";
-  const canStart = stage === "idle" || stage === "failed";
-  const visible = script.tool_calls.slice(0, Math.min(toolsDone + 1, script.tool_calls.length));
+function formatArgs(args: Record<string, string | number>): string {
+  return Object.entries(args)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(", ");
+}
+
+export function InvestigationPanel({ investigation, busy, onStart }: Props) {
+  const running = investigation?.status === "running" || busy === "starting";
+  const label = running ? "Investigating…" : investigation ? "Re-run investigation" : "Investigate";
+  const tokens = investigation ? investigation.usage.input_tokens + investigation.usage.output_tokens : 0;
 
   return (
     <section aria-labelledby="inv-heading" className="rounded-lg border border-border bg-surface p-4">
@@ -34,61 +27,55 @@ export function InvestigationPanel({
         <button
           type="button"
           onClick={onStart}
-          disabled={!canStart}
+          disabled={running || busy !== null}
           className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {running ? "Investigating…" : stage === "failed" ? "Retry investigation" : started ? "Investigation complete" : "Investigate"}
+          {label}
         </button>
       </div>
 
       <p role="status" className="mt-2 text-sm text-muted">
-        {stage === "idle" && "No investigation has been run for this incident."}
-        {running && "Agent is calling diagnostic tools (mock run)…"}
-        {stage === "failed" && "Investigation stopped before findings were produced."}
-        {(stage === "complete" || stage === "executing" || stage === "verifying" || stage === "resolved" || stage === "rejected") &&
-          `Finished after ${script.tool_calls.length} tool calls.`}
+        {!investigation && !running && "No investigation has been run for this incident."}
+        {running && "The agent is calling read-only diagnostic tools…"}
+        {investigation?.status === "completed" && `Finished after ${investigation.tool_calls.length} tool calls.`}
+        {investigation?.status === "failed" && "Investigation stopped before findings were produced."}
       </p>
 
-      {stage === "failed" && error && (
-        <p role="alert" className="mt-3 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
-          {error}
+      {investigation && (
+        <p className="mt-1 text-xs text-muted">
+          Provider: <span className="font-medium text-foreground">{investigation.provider.label}</span>
+          {tokens > 0 &&
+            ` · ${investigation.usage.rounds} rounds · ${tokens.toLocaleString("en-US")} tokens`}
+          {` · ${investigation.id}`}
         </p>
       )}
 
-      {started && (
-        <ol className="mt-3 divide-y divide-border rounded border border-border" aria-label="Tool calls">
-          {visible.map((call, idx) => {
-            const done = idx < toolsDone;
-            const failedHere = stage === "failed" && idx === toolsDone;
-            return (
-              <li key={`${call.name}-${idx}`} className="px-3 py-2 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono text-xs">
-                    {call.name}({call.args})
-                  </span>
-                  <span className="text-xs text-muted">
-                    {done ? `ok · ${call.duration_ms} ms` : failedHere ? "error" : "running…"}
-                  </span>
-                </div>
-                {done && <p className="mt-1 text-muted">{call.result_summary}</p>}
-              </li>
-            );
-          })}
-        </ol>
+      {investigation?.status === "failed" && investigation.failure && (
+        <p role="alert" className="mt-3 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+          {investigation.failure.message}
+          <span className="ml-1 font-mono text-xs">({investigation.failure.code})</span>
+        </p>
       )}
 
-      <details className="mt-4 text-xs text-muted">
-        <summary className="cursor-pointer">Mock controls (Phase 1 only)</summary>
-        <label className="mt-2 flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={simulateFailure}
-            disabled={running}
-            onChange={(e) => onSimulateFailureChange(e.target.checked)}
-          />
-          Simulate a tool timeout on the third call, to preview the error state
-        </label>
-      </details>
+      {investigation && investigation.tool_calls.length > 0 && (
+        <ol className="mt-3 divide-y divide-border rounded border border-border" aria-label="Tool calls">
+          {investigation.tool_calls.map((call) => (
+            <li key={call.id} className="px-3 py-2 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-mono text-xs">
+                  {call.name}({formatArgs(call.arguments)})
+                </span>
+                <span className={`text-xs ${call.status === "error" ? "text-danger" : "text-muted"}`}>
+                  {call.status === "ok"
+                    ? `ok · ${call.duration_ms} ms`
+                    : `error: ${call.error_code} · ${call.duration_ms} ms`}
+                </span>
+              </div>
+              <p className="mt-1 text-muted">{call.result_summary}</p>
+            </li>
+          ))}
+        </ol>
+      )}
     </section>
   );
 }

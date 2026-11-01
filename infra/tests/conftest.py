@@ -17,6 +17,7 @@ from agentops_infra.monitoring_stack import MonitoringStack
 ACCOUNT = "123456789012"
 ENV = cdk.Environment(account=ACCOUNT, region="us-east-1")
 REPO = "SAURABHSALVE/agentops"
+SUBJECT_PREFIX = "repo:SAURABHSALVE@90780335/agentops@1437085899"  # what GitHub signs for this repository
 EMAIL = "alerts@example.com"
 PLACEHOLDER = Path(__file__).resolve().parent.parent / "placeholder_site"
 
@@ -31,9 +32,9 @@ class Built:
     backend_stack: BackendStack
 
 
-def build(stage: str, backend_dir: Path) -> Built:
+def build(stage: str, backend_dir: Path, agent_provider: str = "mock") -> Built:
     app = cdk.App()
-    cfg = StageConfig(stage=stage, alert_email=EMAIL, budget_limit_usd=10)
+    cfg = StageConfig(stage=stage, alert_email=EMAIL, budget_limit_usd=10, agent_provider=agent_provider)
     data = DataStack(app, "Data", cfg=cfg, env=ENV)
     backend = BackendStack(app, "Backend", cfg=cfg, data=data, backend_dir=backend_dir, env=ENV)
     frontend = FrontendStack(
@@ -72,4 +73,9 @@ def prod(fake_backend: Path) -> Built:
 @pytest.fixture(scope="session")
 def oidc() -> Template:
     app = cdk.App()
-    return Template.from_stack(GitHubOidcStack(app, "Oidc", repo=REPO, env=ENV))
+    return Template.from_stack(GitHubOidcStack(app, "Oidc", subject_prefix=SUBJECT_PREFIX, env=ENV))
+
+
+@pytest.fixture(scope="session")
+def live(fake_backend: Path) -> Built:
+    return build("dev", fake_backend, agent_provider="openai")

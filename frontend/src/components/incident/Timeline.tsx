@@ -17,7 +17,7 @@ export function Timeline({ events }: { events: TimelineEvent[] }) {
       <h2 id="tl-heading" className="font-semibold">
         Timeline
       </h2>
-      <p className="mt-1 text-xs text-muted">Session events are not saved yet; they reset on refresh.</p>
+      <p className="mt-1 text-xs text-muted">Recorded by the server: the history survives page refreshes and backend restarts.</p>
       <ol className="mt-3 space-y-3 border-l border-border pl-4">
         {events.map((e) => (
           <li key={e.id} className="text-sm">

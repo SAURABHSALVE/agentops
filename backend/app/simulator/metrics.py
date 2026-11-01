@@ -48,8 +48,15 @@ def _minutes(start: datetime, end: datetime) -> list[datetime]:
 
 def build_metrics_result(incident: IncidentDetail, metric: MetricName, spec: MetricSpec) -> MetricsResult:
     start, end = series_span(incident)
-    minutes = _minutes(start, end)
-    values = [(ts, raw_value(spec, ts)) for ts in minutes]
+    values = [(ts, raw_value(spec, ts)) for ts in _minutes(start, end)]
+    return build_metrics_result_from_values(incident, metric, spec.unit, values)
+
+
+def build_metrics_result_from_values(
+    incident: IncidentDetail, metric: MetricName, unit: str, values: list[tuple[datetime, float]]
+) -> MetricsResult:
+    """Summarise one value per minute across the incident's lead-in and window (shared by every source)."""
+    start, end = series_span(incident)
 
     lead = [v for ts, v in values if ts < incident.started_at]
     window = [(ts, v) for ts, v in values if ts >= incident.started_at]
@@ -69,7 +76,7 @@ def build_metrics_result(incident: IncidentDetail, metric: MetricName, spec: Met
         incident_id=incident.id,
         service=incident.service,
         metric=metric,
-        unit=spec.unit,
+        unit=unit,
         window_start=start,
         window_end=end,
         resolution_minutes=BUCKET_MINUTES,

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DataModeBadge } from "./DataModeBadge";
 
 export function AppHeader() {
   return (
@@ -7,12 +8,7 @@ export function AppHeader() {
         <Link href="/" className="text-base font-semibold tracking-tight">
           AgentOps AI
         </Link>
-        <p
-          className="rounded border border-border bg-surface-2 px-2 py-1 text-xs text-muted"
-          title="All incidents, logs and metrics shown are fictional demo data."
-        >
-          Simulated demo telemetry · not real production data
-        </p>
+        <DataModeBadge />
       </div>
     </header>
   );

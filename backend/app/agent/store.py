@@ -24,6 +24,10 @@ class InvestigationStore(Protocol):
 
     def latest_for(self, incident_id: str) -> Investigation | None: ...
 
+    def list_for_incident(self, incident_id: str) -> list[Investigation]:
+        """Oldest first. Used to build the audit timeline."""
+        ...
+
 
 class InMemoryInvestigationStore:
     def __init__(self) -> None:
@@ -67,3 +71,7 @@ class InMemoryInvestigationStore:
         with self._lock:
             matching = [r for r in self._rows.values() if r.incident_id == incident_id]
             return matching[-1] if matching else None
+
+    def list_for_incident(self, incident_id: str) -> list[Investigation]:
+        with self._lock:
+            return [r for r in self._rows.values() if r.incident_id == incident_id]

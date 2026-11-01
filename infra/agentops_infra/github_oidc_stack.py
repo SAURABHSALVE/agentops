@@ -1,8 +1,10 @@
 """Lets GitHub Actions deploy without long-lived AWS keys.
 
 GitHub signs a short-lived OIDC token per workflow run; AWS accepts it only when the signed `sub` claim
-names this repository and an allowed ref. The roles can do nothing except assume the CDK bootstrap roles,
-so what a deploy may change is decided by the bootstrap stack, not by these roles.
+names this repository and an allowed ref. The claim prefix is passed in (see config.github_subject_prefix)
+because newer repositories sign an immutable form that includes numeric owner and repository ids.
+The roles can do nothing except assume the CDK bootstrap roles, so what a deploy may change is decided by
+the bootstrap stack, not by these roles.
 
 Deploy this stack by hand with an admin identity, once. It is deliberately NOT in the CI deploy set: a
 pipeline must not be able to rewrite its own trust policy.
@@ -24,7 +26,7 @@ class GitHubOidcStack(Stack):
         scope: Construct,
         construct_id: str,
         *,
-        repo: str,
+        subject_prefix: str,
         existing_provider_arn: str | None = None,
         **kwargs: Any,
     ) -> None:
@@ -72,7 +74,7 @@ class GitHubOidcStack(Stack):
         self.deploy_role = github_role(
             "DeployRole",
             "agentops-github-deploy-prod",
-            f"repo:{repo}:ref:refs/heads/main",
+            f"{subject_prefix}:ref:refs/heads/main",
             "GitHub Actions on main: cdk deploy via the CDK bootstrap roles",
             ["deploy", "file-publishing", "lookup"],
         )
@@ -80,7 +82,7 @@ class GitHubOidcStack(Stack):
         self.diff_role = github_role(
             "DiffRole",
             "agentops-github-diff",
-            f"repo:{repo}:pull_request",
+            f"{subject_prefix}:pull_request",
             "GitHub Actions on pull requests: cdk diff only (lookup role)",
             ["lookup"],
         )

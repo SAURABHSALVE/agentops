@@ -1,12 +1,12 @@
-"""HTTP routes: read-only incidents and simulated diagnostics, plus investigations (Phase 3A).
+"""HTTP routes: incidents, simulated diagnostics, investigations and the approval gate.
 
-Starting an investigation is the only write. Remediation execution is intentionally NOT exposed
-yet: it needs the Phase 5 approval gate.
+Writes: start an investigation, and approve or reject the remediation it proposed. Neither takes a
+request body, so a client cannot choose an action, a tool or an incident beyond the path ids.
 """
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Path, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Path, Query, Request
 
 from app.agent.models import Investigation
 from app.agent.service import InvestigationService
@@ -26,7 +26,9 @@ from app.schemas import (
     MetricsQuery,
     MetricsResult,
     SearchLogsArgs,
+    TimelineEvent,
 )
+from app.security import ACCESS_HEADER
 from app.simulator.service import Simulator
 
 IncidentIdPath = Annotated[str, Path(pattern=r"^INC-\d{4}$", description="Incident id, e.g. INC-1001")]
@@ -39,6 +41,11 @@ _START_ERRORS: dict[int | str, dict[str, Any]] = {**_ERRORS, 409: {"model": Erro
 router = APIRouter()
 
 
+def require_access(request: Request, x_access_code: Annotated[str | None, Header(alias=ACCESS_HEADER)] = None) -> None:
+    """Gate for every write. A no-op unless an access code is configured."""
+    request.app.state.access.check(x_access_code)
+
+
 def _sim(request: Request) -> Simulator:
     sim: Simulator = request.app.state.simulator
     return sim
@@ -49,14 +56,26 @@ def _investigations(request: Request) -> InvestigationService:
     return svc
 
 
+@router.get("/api/config", tags=["system"])
+def public_config(request: Request) -> dict[str, Any]:
+    """What the UI needs to know up front. Contains nothing secret."""
+    info = _investigations(request).provider_info
+    return {
+        "data_mode": _sim(request).data_mode,
+        "write_access": "code_required" if request.app.state.access.required else "open",
+        "provider": {"kind": info.kind, "label": info.label},
+    }
+
+
 @router.get("/health", response_model=HealthResponse, tags=["system"])
-def health() -> HealthResponse:
-    return HealthResponse(status="ok", data_mode="simulated", version=APP_VERSION)
+def health(request: Request) -> HealthResponse:
+    return HealthResponse(status="ok", data_mode=_sim(request).data_mode, version=APP_VERSION)
 
 
 @router.get("/api/incidents", response_model=list[IncidentSummary], tags=["incidents"])
 def list_incidents(request: Request) -> list[IncidentSummary]:
-    return _sim(request).list_incidents()
+    svc = _investigations(request)
+    return [svc.with_status(i) for i in _sim(request).list_incidents()]
 
 
 @router.get(
@@ -66,7 +85,19 @@ def list_incidents(request: Request) -> list[IncidentSummary]:
     tags=["incidents"],
 )
 def get_incident(incident_id: IncidentIdPath, request: Request) -> IncidentDetail:
-    return _sim(request).get_incident(GetIncidentArgs(incident_id=incident_id))
+    incident = _sim(request).get_incident(GetIncidentArgs(incident_id=incident_id))
+    return _investigations(request).with_status_detail(incident)
+
+
+@router.get(
+    "/api/incidents/{incident_id}/timeline",
+    response_model=list[TimelineEvent],
+    responses=_ERRORS,
+    tags=["incidents"],
+)
+def get_timeline(incident_id: IncidentIdPath, request: Request) -> list[TimelineEvent]:
+    """Fixture history plus every recorded investigation, tool call, approval, action and verification."""
+    return _investigations(request).timeline(incident_id)
 
 
 @router.get(
@@ -110,10 +141,12 @@ def get_deployments(
     status_code=202,
     responses=_START_ERRORS,
     tags=["investigations"],
+    dependencies=[Depends(require_access)],
 )
 def start_investigation(incident_id: IncidentIdPath, request: Request, background: BackgroundTasks) -> Investigation:
     """Start an investigation and return immediately; poll the returned id until it is not 'running'."""
     svc = _investigations(request)
+    request.app.state.limiter.check()  # before any record exists, so a refusal never leaves one 'running'
     started = svc.start(incident_id)
     background.add_task(svc.run, started.id)
     return started
@@ -137,3 +170,30 @@ def latest_investigation(incident_id: IncidentIdPath, request: Request) -> Inves
 )
 def get_investigation(investigation_id: InvestigationIdPath, request: Request) -> Investigation:
     return _investigations(request).get(investigation_id)
+
+
+@router.post(
+    "/api/investigations/{investigation_id}/remediation/approve",
+    response_model=Investigation,
+    responses=_START_ERRORS,
+    tags=["approval"],
+    dependencies=[Depends(require_access)],
+)
+def approve_remediation(investigation_id: InvestigationIdPath, request: Request) -> Investigation:
+    """Approve the remediation proposed by this investigation, run it (simulated) and verify it.
+
+    Takes no body: the action is the one the server validated and stored. Repeating this call
+    returns the recorded outcome and does not run the action again.
+    """
+    return _investigations(request).approve(investigation_id)
+
+
+@router.post(
+    "/api/investigations/{investigation_id}/remediation/reject",
+    response_model=Investigation,
+    responses=_START_ERRORS,
+    tags=["approval"],
+    dependencies=[Depends(require_access)],
+)
+def reject_remediation(investigation_id: InvestigationIdPath, request: Request) -> Investigation:
+    return _investigations(request).reject(investigation_id)

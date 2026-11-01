@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -26,10 +27,11 @@ from app.agent.models import (
     Findings,
     Investigation,
     Remediation,
+    RemediationRecord,
     ToolCallRecord,
     Usage,
 )
-from app.agent.prompts import SYSTEM_PROMPT, USER_PROMPT, encode_tool_result
+from app.agent.prompts import FINAL_ROUND_NOTICE, USER_PROMPT, encode_tool_result, system_prompt
 from app.agent.provider import (
     CompletionRequest,
     CompletionResponse,
@@ -67,6 +69,17 @@ class Limits:
     max_output_tokens: int
     max_tool_calls: int = 12
     max_calls_per_round: int = 6
+
+
+def answer_schema() -> dict[str, Any]:
+    """FinalAnswer's JSON Schema with remediation_action_id narrowed to the real allowlist (or null).
+    This only guides a model; validate_answer still enforces it."""
+    schema = FinalAnswer.model_json_schema()
+    schema["properties"]["remediation_action_id"] = {
+        "anyOf": [{"type": "string", "enum": sorted(REMEDIATIONS)}, {"type": "null"}],
+        "title": "Remediation Action Id",
+    }
+    return schema
 
 
 class _Reject(Exception):
@@ -159,15 +172,16 @@ class Coordinator:
                 status="failed", failure=Failure(code=code, message=FAILURE_MESSAGES[code]), finished_at=self._clock()
             )
 
-        for _ in range(limits.max_rounds):
+        for round_index in range(limits.max_rounds):
+            last_round = limits.max_rounds > 1 and round_index == limits.max_rounds - 1
             if tokens_in + tokens_out >= limits.max_total_tokens:
                 return fail("budget_exceeded")
             rounds += 1
             request = CompletionRequest(
-                system=SYSTEM_PROMPT,
-                messages=tuple(messages),
-                tools=tool_schemas(),
-                answer_schema=FinalAnswer.model_json_schema(),
+                system=system_prompt(),
+                messages=(*messages, Message("user", FINAL_ROUND_NOTICE)) if last_round else tuple(messages),
+                tools=() if last_round else tool_schemas(),
+                answer_schema=answer_schema(),
                 max_output_tokens=limits.max_output_tokens,
             )
             started = time.perf_counter()
@@ -192,12 +206,18 @@ class Coordinator:
             if bool(response.tool_calls) == (response.final_text is not None):
                 return fail("invalid_output")  # neither, or both
 
+            if last_round and response.tool_calls:
+                return fail("max_rounds_exceeded")  # asked for tools that were not offered; none are run
+
             if response.final_text is not None:
                 try:
                     findings = validate_answer(response.final_text, grounded, service)
                 except _Reject as rejected:
                     return fail(rejected.code)
-                return snapshot(status="completed", findings=findings, finished_at=self._clock())
+                state = RemediationRecord(action_id=findings.remediation.action_id) if findings.remediation else None
+                return snapshot(
+                    status="completed", findings=findings, remediation_state=state, finished_at=self._clock()
+                )
 
             calls = _normalise_ids(response.tool_calls, len(records))
             messages.append(Message("assistant", tool_calls=calls))

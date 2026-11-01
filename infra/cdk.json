@@ -106,6 +106,7 @@
     "@aws-cdk/customresources:installLatestAwsSdkDefault": false,
     "@aws-cdk/s3-notifications:addS3TrustKeyPolicyForSnsSubscriptions": true,
     "githubRepo": "SAURABHSALVE/agentops",
+    "githubSubjectPrefix": "repo:SAURABHSALVE@90780335/agentops@1437085899",
     "budgetLimitUsd": 10,
     "@aws-cdk/aws-apigateway:logGroupDestinationArnWithoutWildcard": true
   }

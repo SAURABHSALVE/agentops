@@ -1,26 +1,36 @@
 import logging
+import os
+from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.agent.mock_provider import MockProvider
+from app.agent.factory import build_provider
 from app.agent.provider import LLMProvider
 from app.agent.service import InvestigationService
+from app.agent.sqlite_store import SqliteInvestigationStore
 from app.agent.store import InMemoryInvestigationStore, InvestigationStore
 from app.api import router
-from app.config import APP_VERSION, Settings
+from app.config import APP_VERSION, Settings, load_env_file
 from app.errors import (
     AgentOpsError,
     IncidentNotFoundError,
     InvestigationInProgressError,
     InvestigationNotFoundError,
     MetricNotAvailableError,
+    RateLimitedError,
+    RemediationStateError,
+    UnauthorizedError,
 )
 from app.repository import InMemoryIncidentRepository
 from app.schemas import ErrorDetail, ErrorResponse
+from app.security import ACCESS_HEADER, AccessGate, RateLimiter, load_access_code
+from app.simulator.captured import CapturedSource
 from app.simulator.service import Simulator
+from app.simulator.source import FixtureSource, TelemetrySource
 
 logger = logging.getLogger("agentops")
 
@@ -29,6 +39,9 @@ _STATUS_BY_CODE = {
     MetricNotAvailableError.code: 404,
     InvestigationNotFoundError.code: 404,
     InvestigationInProgressError.code: 409,
+    RemediationStateError.code: 409,
+    UnauthorizedError.code: 401,
+    RateLimitedError.code: 429,
 }
 
 
@@ -41,7 +54,16 @@ def _build_store(settings: Settings) -> InvestigationStore:
         from app.agent.dynamodb_store import DynamoDbInvestigationStore  # keeps boto3 optional locally
 
         return DynamoDbInvestigationStore.for_table(settings.dynamodb_table)
+    if settings.storage_mode == "local":
+        return SqliteInvestigationStore(Path(settings.local_data_dir) / "agentops.sqlite3")
     return InMemoryInvestigationStore()
+
+
+def _build_simulator(settings: Settings) -> Simulator:
+    source: TelemetrySource = (
+        CapturedSource.load(Path(settings.telemetry_dataset)) if settings.telemetry_dataset else FixtureSource()
+    )
+    return Simulator(InMemoryIncidentRepository(source.incidents()), source)
 
 
 def create_app(
@@ -49,32 +71,47 @@ def create_app(
     settings: Settings | None = None,
     provider: LLMProvider | None = None,
     store: InvestigationStore | None = None,
+    access: AccessGate | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
         title="AgentOps AI API",
         version=APP_VERSION,
         description=(
-            "Incident investigation backend. **All data served is simulated demo telemetry**, "
-            "not real production or CloudWatch data."
+            "Incident investigation backend. Data is either simulated demo telemetry (default) or telemetry "
+            "captured from a local lab system (`TELEMETRY_DATASET`). Neither is production or CloudWatch data."
         ),
     )
-    app.state.simulator = simulator or Simulator(InMemoryIncidentRepository())
+    app.state.simulator = simulator or _build_simulator(settings)
     app.state.investigations = InvestigationService(
-        app.state.simulator, store or _build_store(settings), provider or MockProvider(), settings
+        app.state.simulator, store or _build_store(settings), provider or build_provider(settings), settings
     )
+
+    app.state.access = access or AccessGate(load_access_code())
+    app.state.limiter = RateLimiter(settings.rate_per_minute, settings.rate_per_hour)
+
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        if request.url.path.startswith("/api/"):
+            response.headers.setdefault("Cache-Control", "no-store")
+        return response
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.cors_allow_origins),
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type"],
+        allow_headers=["Content-Type", ACCESS_HEADER],
     )
 
     @app.exception_handler(AgentOpsError)
     async def _domain_error(_: Request, exc: AgentOpsError) -> JSONResponse:
         status = _STATUS_BY_CODE.get(exc.code, 400)
-        return _envelope(status, ErrorDetail(code=exc.code, message=exc.message))
+        response = _envelope(status, ErrorDetail(code=exc.code, message=exc.message))
+        if isinstance(exc, RateLimitedError):
+            response.headers["Retry-After"] = str(exc.retry_after)
+        return response
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -93,4 +130,6 @@ def create_app(
     return app
 
 
+if not os.environ.get("AGENTOPS_NO_DOTENV"):  # tests set this so a real key is never picked up
+    load_env_file(Path(__file__).resolve().parent.parent / ".env")
 app = create_app()

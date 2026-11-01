@@ -1,3 +1,11 @@
+import os
+
+# Tests must never read the real backend/.env, call a live model, or write a local database.
+os.environ["AGENTOPS_NO_DOTENV"] = "1"
+os.environ["STORAGE_MODE"] = "memory"
+os.environ["AGENT_PROVIDER"] = "mock"
+os.environ.pop("OPENAI_API_KEY", None)
+
 import pytest
 from fastapi.testclient import TestClient
 

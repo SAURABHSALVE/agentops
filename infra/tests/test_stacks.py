@@ -9,8 +9,8 @@ import aws_cdk as cdk
 import pytest
 from aws_cdk.assertions import Match, Template
 
-from agentops_infra.config import ConfigError, github_repo, stage_config
-from tests.conftest import ACCOUNT, EMAIL, REPO, Built
+from agentops_infra.config import ConfigError, github_repo, github_subject_prefix, stage_config
+from tests.conftest import ACCOUNT, EMAIL, REPO, SUBJECT_PREFIX, Built
 
 
 def only(template: Template, kind: str) -> dict[str, Any]:
@@ -56,6 +56,32 @@ def test_repository_must_look_like_owner_slash_name() -> None:
     for bad in ("", "no-slash", "a/b/c", "a b/c"):
         with pytest.raises(ConfigError):
             github_repo(_ctx(githubRepo=bad))
+
+
+def test_subject_prefix_defaults_to_the_name_form_and_accepts_the_immutable_form_for_the_same_repo() -> None:
+    assert github_subject_prefix(_ctx(githubRepo=REPO)) == f"repo:{REPO}"
+    assert github_subject_prefix(_ctx(githubRepo=REPO, githubSubjectPrefix=SUBJECT_PREFIX)) == SUBJECT_PREFIX
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "repo:someone-else@1/agentops@2",  # a different owner
+        "repo:SAURABHSALVE@90780335/other@2",  # a different repository
+        "SAURABHSALVE@90780335/agentops@1437085899",  # missing the repo: scheme
+        "repo:SAURABHSALVE@90780335/agentops@1437085899:ref:refs/heads/main",  # a full subject, not a prefix
+        "repo:SAURABHSALVE@*/agentops@*",  # wildcards would trust more than one repository
+        "repo:SAURABHSALVE@abc/agentops@def",  # ids are numeric
+    ],
+)
+def test_a_subject_prefix_for_another_repository_or_with_wildcards_is_refused(prefix: str) -> None:
+    with pytest.raises(ConfigError):
+        github_subject_prefix(_ctx(githubRepo=REPO, githubSubjectPrefix=prefix))
+
+
+def test_the_committed_cdk_json_trusts_the_repositorys_immutable_subject() -> None:
+    cfg = json.loads((Path(__file__).resolve().parents[1] / "cdk.json").read_text(encoding="utf-8"))["context"]
+    assert cfg["githubRepo"] == REPO and cfg["githubSubjectPrefix"] == SUBJECT_PREFIX
 
 
 # ---- data ------------------------------------------------------------------------------------------
@@ -247,7 +273,7 @@ def test_deploy_role_trusts_exactly_one_repository_and_the_main_branch(oidc: Tem
     assert len(trust) == 1 and trust[0]["Action"] == "sts:AssumeRoleWithWebIdentity"
     assert trust[0]["Condition"]["StringEquals"] == {
         "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-        "token.actions.githubusercontent.com:sub": f"repo:{REPO}:ref:refs/heads/main",
+        "token.actions.githubusercontent.com:sub": f"{SUBJECT_PREFIX}:ref:refs/heads/main",
     }
     assert "StringLike" not in trust[0]["Condition"], "no wildcard matching on the subject"
 
@@ -255,7 +281,7 @@ def test_deploy_role_trusts_exactly_one_repository_and_the_main_branch(oidc: Tem
 def test_diff_role_is_limited_to_pull_requests_and_the_lookup_role(oidc: Template) -> None:
     role = _role(oidc, "agentops-github-diff")
     sub = role["AssumeRolePolicyDocument"]["Statement"][0]["Condition"]["StringEquals"]
-    assert sub["token.actions.githubusercontent.com:sub"] == f"repo:{REPO}:pull_request"
+    assert sub["token.actions.githubusercontent.com:sub"] == f"{SUBJECT_PREFIX}:pull_request"
     (policy,) = [
         p for p in oidc.find_resources("AWS::IAM::Policy").values() if "Diff" in json.dumps(p["Properties"]["Roles"])
     ]
@@ -283,7 +309,9 @@ def test_an_existing_provider_can_be_reused() -> None:
     from tests.conftest import ENV
 
     arn = f"arn:aws:iam::{ACCOUNT}:oidc-provider/token.actions.githubusercontent.com"
-    template = T.from_stack(GitHubOidcStack(cdk.App(), "Reuse", repo=REPO, existing_provider_arn=arn, env=ENV))
+    template = T.from_stack(
+        GitHubOidcStack(cdk.App(), "Reuse", subject_prefix=SUBJECT_PREFIX, existing_provider_arn=arn, env=ENV)
+    )
     template.resource_count_is("AWS::IAM::OIDCProvider", 0)
     template.resource_count_is("AWS::IAM::Role", 2)
 
@@ -293,3 +321,65 @@ def test_no_aws_account_id_is_written_down_in_the_source() -> None:
     files = [*root.glob("*.py"), *root.glob("agentops_infra/*.py"), root / "cdk.json"]
     offenders = [f.name for f in files if re.search(r"(?<!\d)\d{12}(?!\d)", f.read_text(encoding="utf-8"))]
     assert offenders == [], "the account comes from the deploying credentials (CDK_DEFAULT_ACCOUNT)"
+
+
+# ---- live model mode (opt-in: -c agentProvider=openai) -----------------------------------------------
+
+
+def lambda_env(built: Built) -> dict[str, str]:
+    props = next(
+        r["Properties"]
+        for r in built.backend.find_resources("AWS::Lambda::Function").values()
+        if r["Properties"].get("Handler") == "app.lambda_handler.handler"
+    )
+    return dict(props["Environment"]["Variables"])
+
+
+def test_default_deployment_has_no_live_model_access_code_or_secret_access(dev: Built) -> None:
+    env = lambda_env(dev)
+    assert env["AGENT_PROVIDER"] == "mock"
+    assert not any(k in env for k in ("OPENAI_SECRET_ARN", "ACCESS_SECRET_ARN", "OPENAI_MODEL"))
+    assert len(dev.data.find_resources("AWS::SecretsManager::Secret")) == 1
+
+
+def test_live_mode_adds_an_access_code_and_read_only_access_to_exactly_two_secrets(live: Built) -> None:
+    assert len(live.data.find_resources("AWS::SecretsManager::Secret")) == 2
+    env = lambda_env(live)
+    assert env["AGENT_PROVIDER"] == "openai" and env["OPENAI_MODEL"] == "gpt-4.1-mini"
+    assert {"OPENAI_SECRET_ARN", "ACCESS_SECRET_ARN"} <= set(env)
+    assert int(env["OPENAI_TIMEOUT_SECONDS"]) < 29, "the model call must give up before the Lambda does"
+    assert (env["INVESTIGATIONS_PER_MINUTE"], env["INVESTIGATIONS_PER_HOUR"]) == ("6", "60")
+
+    secret_statements = [
+        s
+        for s in statements(live.backend)
+        if any(
+            a.startswith("secretsmanager:") for a in (s["Action"] if isinstance(s["Action"], list) else [s["Action"]])
+        )
+    ]
+    assert secret_statements, "the function must be able to read the secrets"
+    for s in secret_statements:
+        actions = s["Action"] if isinstance(s["Action"], list) else [s["Action"]]
+        assert set(actions) <= {"secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"}, s
+        assert s["Effect"] == "Allow" and s["Resource"] != "*", s
+        assert len(s["Resource"]) >= 1 if isinstance(s["Resource"], list) else True
+
+
+def test_the_access_code_is_generated_by_secrets_manager_not_written_in_the_template(live: Built) -> None:
+    generated = [
+        r["Properties"]
+        for r in live.data.find_resources("AWS::SecretsManager::Secret").values()
+        if "GenerateSecretString" in r["Properties"]
+    ]
+    assert len(generated) == 1 and generated[0]["GenerateSecretString"]["PasswordLength"] >= 24
+    assert generated[0]["GenerateSecretString"]["ExcludePunctuation"] is True
+    assert "demo-code" not in json.dumps(live.data.to_json())
+
+
+def test_agent_provider_and_model_are_validated() -> None:
+    assert stage_config(_ctx(stage="dev", alertEmail=EMAIL)).agent_provider == "mock"
+    live_cfg = stage_config(_ctx(stage="dev", alertEmail=EMAIL, agentProvider="openai", openaiModel="gpt-4.1-mini"))
+    assert live_cfg.live and live_cfg.openai_model == "gpt-4.1-mini"
+    for bad in ({"agentProvider": "bedrock"}, {"agentProvider": "openai", "openaiModel": "../x"}):
+        with pytest.raises(ConfigError):
+            stage_config(_ctx(stage="dev", alertEmail=EMAIL, **bad))

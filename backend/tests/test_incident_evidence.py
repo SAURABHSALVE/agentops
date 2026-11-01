@@ -15,20 +15,29 @@ from app.simulator.fixtures import INCIDENTS
 from app.simulator.ground_truth import GROUND_TRUTH
 from app.simulator.service import MAX_MESSAGE_CHARS, Simulator
 
-CLEAR = ["INC-1001", "INC-1002", "INC-1003", "INC-1005"]
-FAILURE_PATTERN = {"INC-1001": "timeout", "INC-1002": "slow query", "INC-1003": "503", "INC-1005": "timeout"}
+CLEAR = ["INC-1001", "INC-1002", "INC-1003", "INC-1005", "INC-1006"]
+FAILURE_PATTERN = {
+    "INC-1001": "timeout",
+    "INC-1002": "slow query",
+    "INC-1003": "503",
+    "INC-1005": "timeout",
+    "INC-1006": "503",
+}
 
 
 def test_ground_truth_covers_exactly_the_seeded_incidents() -> None:
     assert set(GROUND_TRUTH) == {i.id for i in INCIDENTS}
-    assert len(INCIDENTS) == 5
+    assert len(INCIDENTS) == 6
 
 
 @pytest.mark.parametrize("iid", CLEAR)
 def test_clear_incident_failure_logs_contain_expected_evidence(sim: Simulator, iid: str) -> None:
     gt = GROUND_TRUTH[iid]
     res = sim.search_logs(SearchLogsArgs(incident_id=iid, query=FAILURE_PATTERN[iid], limit=50))
-    assert gt.expected_log_ids <= set(res.reference_ids)
+    found = set(res.reference_ids)
+    if iid == "INC-1006":  # its key also counts the WARN backlog lines, which a "503" search does not match
+        found |= set(sim.search_logs(SearchLogsArgs(incident_id=iid, query="queue length", limit=50)).reference_ids)
+    assert gt.expected_log_ids <= found
     assert res.total_matches >= 12
     assert res.reference_ids == [e.id for e in res.entries]  # citable ids == returned entries
 
@@ -88,7 +97,7 @@ def test_ambiguous_incident_has_no_dominant_failure_pattern(sim: Simulator) -> N
     for pattern in ("timeout", "slow query", "503", "error"):
         res = sim.search_logs(SearchLogsArgs(incident_id="INC-1004", query=pattern))
         assert res.total_matches == 0, pattern
-        assert res.reference_ids == []
+        assert res.reference_ids == [f"logs:search-api:no-match:{pattern.replace(' ', '-')}"]  # citable absence
     warns = sim.search_logs(SearchLogsArgs(incident_id="INC-1004", query="a", level="WARN", limit=50))
     messages = [e.message for e in warns.entries]
     assert len(messages) >= 5
@@ -123,6 +132,7 @@ def test_clear_incidents_contain_no_evidence_of_the_other_causes(sim: Simulator)
         "INC-1002": ["timeout", "503"],
         "INC-1003": ["timeout", "slow query"],
         "INC-1005": ["slow query", "503"],
+        "INC-1006": ["timeout", "slow query"],
     }
     for iid, patterns in other.items():
         for p in patterns:
