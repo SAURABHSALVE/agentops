@@ -152,6 +152,19 @@ def test_the_api_runs_an_investigation_end_to_end_on_dynamodb(
     assert client.post("/api/incidents/INC-1001/investigations").status_code == 202
 
 
+def test_feedback_is_saved_on_dynamodb_and_does_not_reopen_the_incident_for_another_run(
+    sim: Simulator, store: DynamoDbInvestigationStore
+) -> None:
+    client = TestClient(create_app(simulator=sim, store=store))
+    inv_id = client.post("/api/incidents/INC-1001/investigations").json()["id"]
+    saved = client.post(f"/api/investigations/{inv_id}/feedback", json={"helpful": True, "comment": "clear"})
+    assert saved.status_code == 200
+    stored = store.get(inv_id).feedback
+    assert stored is not None and stored.comment == "clear"
+    assert client.get("/api/incidents/INC-1001/investigations/latest").json()["feedback"]["helpful"] is True
+    assert client.post("/api/incidents/INC-1001/investigations").status_code == 202  # still free to re-run
+
+
 def test_storage_mode_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("STORAGE_MODE", raising=False)  # conftest pins "memory" for the rest of the suite
     assert Settings.from_env().storage_mode == "local"
