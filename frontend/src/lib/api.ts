@@ -47,7 +47,7 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    const headers: Record<string, string> = { Accept: "application/json" };
+    const headers: Record<string, string> = { Accept: "application/json", ...(init?.headers as Record<string, string>) };
     const code = init?.method === "POST" ? getAccessCode() : "";
     if (code) headers["X-Access-Code"] = code;
     res = await fetch(`${API_BASE}${path}`, { ...init, headers });
@@ -90,6 +90,12 @@ export const api = {
     request<Investigation>(`/api/incidents/${enc(incidentId)}/investigations`, { method: "POST" }),
   approve: (investigationId: string) =>
     request<Investigation>(`/api/investigations/${enc(investigationId)}/remediation/approve`, { method: "POST" }),
+  feedback: (investigationId: string, helpful: boolean, comment: string) =>
+    request<Investigation>(`/api/investigations/${enc(investigationId)}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ helpful, comment: comment.trim() || null }),
+    }),
   reject: (investigationId: string) =>
     request<Investigation>(`/api/investigations/${enc(investigationId)}/remediation/reject`, { method: "POST" }),
 };

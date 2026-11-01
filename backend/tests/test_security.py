@@ -202,6 +202,6 @@ def test_every_write_route_is_behind_the_access_gate() -> None:
         for r in router.routes
         if isinstance(r, APIRoute) and (r.methods or set()) & {"POST", "PUT", "PATCH", "DELETE"}
     ]
-    assert len(writes) == 3
+    assert len(writes) == 4  # start, approve, reject, feedback
     for route in writes:
         assert any(d.call is require_access for d in route.dependant.dependencies), route.path

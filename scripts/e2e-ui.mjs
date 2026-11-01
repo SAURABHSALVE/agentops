@@ -197,6 +197,9 @@ try {
   check("findings cite evidence ids", /log-1\d\d/.test(t) && t.includes("metric:"));
   check("remediation proposed, not run", t.includes("simulate_clear_dependency_fault") && t.includes("Approve simulated action"));
   await shot("inc-1001-findings");
+  check("feedback is offered once findings exist", (await text()).includes("Was this answer useful?"));
+  await clickButton("Yes, helpful");
+  check("feedback can be sent", (await clickButton("Send feedback")) && (await waitText("Thanks, feedback saved.", 15000)));
   check("approve works", await clickButton("Approve simulated action"));
   check("verification passes", await waitText("Passed: incident resolved", 20000));
   t = await text();
@@ -206,6 +209,7 @@ try {
 
   await goto("/incidents/INC-1001/");
   check("state survives a page reload", (await waitText("Passed: incident resolved", 15000)) && (await text()).includes("get_incident("));
+  check("feedback survives a reload too", (await text()).includes("Thanks, feedback saved."));
 
   // ---- verification failure --------------------------------------------------------------
   await goto("/incidents/INC-1006/");

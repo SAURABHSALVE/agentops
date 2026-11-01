@@ -97,16 +97,23 @@ WRITE_ROUTES = {
     "/api/incidents/{incident_id}/investigations",
     "/api/investigations/{investigation_id}/remediation/approve",
     "/api/investigations/{investigation_id}/remediation/reject",
+    "/api/investigations/{investigation_id}/feedback",
 }
+FEEDBACK_ROUTE = "/api/investigations/{investigation_id}/feedback"
 
 
-def test_the_only_write_routes_are_start_approve_and_reject_and_none_takes_a_body(client: TestClient) -> None:
-    paths = client.get("/openapi.json").json()["paths"]
+def test_the_only_write_routes_are_known_and_only_feedback_takes_a_body(client: TestClient) -> None:
+    doc = client.get("/openapi.json").json()
+    paths = doc["paths"]
     for path, ops in paths.items():
         assert set(ops) <= ({"get", "post"} if path in WRITE_ROUTES else {"get"}), f"unexpected write on {path}"
-        if "post" in ops:
+        if "post" in ops and path != FEEDBACK_ROUTE:
             assert "requestBody" not in ops["post"], f"{path} must not accept a body"
     assert WRITE_ROUTES <= set(paths)
+    # The one body is a verdict and a short note: it cannot name an action, a tool or an incident.
+    ref = paths[FEEDBACK_ROUTE]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    schema = doc["components"]["schemas"][ref.rsplit("/", 1)[1]]
+    assert set(schema["properties"]) == {"helpful", "comment"} and schema["additionalProperties"] is False
     # There is no way to name an action or run one directly.
     assert client.post("/api/incidents/INC-1001/remediation", json={}).status_code in (404, 405)
     assert client.post("/api/remediation/simulate_restart_worker").status_code in (404, 405)

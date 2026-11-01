@@ -146,6 +146,19 @@ class RemediationRecord(_Model):
     error: str | None = None
 
 
+class FeedbackRequest(_Model):
+    """What a person may send about an answer: a verdict and a short note. Nothing here reaches a model."""
+
+    helpful: bool
+    comment: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None
+
+
+class Feedback(_Model):
+    helpful: bool
+    comment: str | None = None
+    at: AwareDatetime
+
+
 class Investigation(_Model):
     id: InvestigationId
     incident_id: IncidentId
@@ -158,4 +171,5 @@ class Investigation(_Model):
     failure: Failure | None = None
     remediation_state: RemediationRecord | None = None
     usage: Usage = Usage()
+    feedback: Feedback | None = None
     simulated: Literal[True] = True

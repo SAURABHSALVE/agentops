@@ -17,6 +17,7 @@ from app.api import router
 from app.config import APP_VERSION, Settings, load_env_file
 from app.errors import (
     AgentOpsError,
+    FeedbackNotAllowedError,
     IncidentNotFoundError,
     InvestigationInProgressError,
     InvestigationNotFoundError,
@@ -40,6 +41,7 @@ _STATUS_BY_CODE = {
     InvestigationNotFoundError.code: 404,
     InvestigationInProgressError.code: 409,
     RemediationStateError.code: 409,
+    FeedbackNotAllowedError.code: 409,
     UnauthorizedError.code: 401,
     RateLimitedError.code: 429,
 }

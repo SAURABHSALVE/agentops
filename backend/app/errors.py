@@ -46,6 +46,12 @@ class RemediationStateError(AgentOpsError):
     code = "invalid_remediation_state"
 
 
+class FeedbackNotAllowedError(AgentOpsError):
+    """Feedback is for a finished investigation; a running one has nothing to rate yet."""
+
+    code = "feedback_not_allowed"
+
+
 class UnauthorizedError(AgentOpsError):
     code = "unauthorized"
 
