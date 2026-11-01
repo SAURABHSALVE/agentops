@@ -85,7 +85,9 @@ export function RemediationPanel({ investigation, busy, onApprove, onReject }: P
       </h2>
 
       {!done && (
-        <p className="mt-2 text-sm text-muted">Available once findings are ready. Nothing runs without your approval.</p>
+        <p className="mt-2 text-sm text-muted">
+          Available once findings are ready. The agent can only suggest a fix; nothing runs unless you approve it.
+        </p>
       )}
 
       {done && !remediation && (
@@ -110,7 +112,8 @@ export function RemediationPanel({ investigation, busy, onApprove, onReject }: P
             </div>
           </dl>
           <p className="rounded bg-surface-2 px-3 py-2 text-xs text-muted">
-            Simulated action: runs only an allowlisted simulation. No real infrastructure is changed.
+            This is a simulation: it runs one pre-approved action and then checks whether the metrics recovered. No real
+            infrastructure is changed.
           </p>
 
           {state.status === "proposed" && (

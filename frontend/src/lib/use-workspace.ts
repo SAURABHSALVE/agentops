@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, type PublicConfig } from "./api";
+import { friendlyError } from "./plain";
 import type { Incident, Investigation, TimelineEvent } from "./types";
 
 const POLL_MS = 1000;
@@ -10,7 +11,7 @@ export type Load = "loading" | "ready" | "not_found" | "error";
 export type Busy = "starting" | "approving" | "rejecting" | null;
 
 function message(e: unknown): string {
-  return e instanceof ApiError ? e.message : "Something went wrong talking to the API.";
+  return e instanceof ApiError ? friendlyError(e.code, e.message) : "Something went wrong talking to the API.";
 }
 
 /** Everything the incident page shows, all from the API: the incident, the newest investigation (polled

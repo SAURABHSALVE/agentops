@@ -1,3 +1,4 @@
+import { failureHelp, toolSentence } from "@/lib/plain";
 import type { Investigation } from "@/lib/types";
 import type { Busy } from "@/lib/use-workspace";
 
@@ -36,8 +37,9 @@ export function InvestigationPanel({ investigation, busy, onStart }: Props) {
 
       <p role="status" className="mt-2 text-sm text-muted">
         {!investigation && !running && "No investigation has been run for this incident."}
-        {running && "The agent is calling read-only diagnostic tools…"}
-        {investigation?.status === "completed" && `Finished after ${investigation.tool_calls.length} tool calls.`}
+        {running &&
+          `The agent is checking logs, metrics and releases (read-only)… ${investigation?.tool_calls.length ?? 0} checks so far.`}
+        {investigation?.status === "completed" && `Finished after ${investigation.tool_calls.length} checks.`}
         {investigation?.status === "failed" && "Investigation stopped before findings were produced."}
       </p>
 
@@ -51,18 +53,25 @@ export function InvestigationPanel({ investigation, busy, onStart }: Props) {
       )}
 
       {investigation?.status === "failed" && investigation.failure && (
-        <p role="alert" className="mt-3 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
-          {investigation.failure.message}
-          <span className="ml-1 font-mono text-xs">({investigation.failure.code})</span>
-        </p>
+        <div role="alert" className="mt-3 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+          <p className="font-medium">{failureHelp(investigation.failure.code).title}</p>
+          <p className="mt-1">{failureHelp(investigation.failure.code).next}</p>
+          <p className="mt-1 text-xs">
+            {investigation.failure.message}
+            <span className="ml-1 font-mono">({investigation.failure.code})</span>
+          </p>
+        </div>
       )}
 
       {investigation && investigation.tool_calls.length > 0 && (
-        <ol className="mt-3 divide-y divide-border rounded border border-border" aria-label="Tool calls">
+        <>
+        <h3 className="mt-4 text-xs font-medium uppercase tracking-wide text-muted">How the agent checked this</h3>
+        <ol className="mt-1 divide-y divide-border rounded border border-border" aria-label="Tool calls">
           {investigation.tool_calls.map((call) => (
             <li key={call.id} className="px-3 py-2 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-mono text-xs">
+              <p className="font-medium">{toolSentence(call)}</p>
+              <div className="mt-0.5 flex flex-wrap items-center justify-between gap-2">
+                <span className="font-mono text-xs text-muted">
                   {call.name}({formatArgs(call.arguments)})
                 </span>
                 <span className={`text-xs ${call.status === "error" ? "text-danger" : "text-muted"}`}>
@@ -75,6 +84,7 @@ export function InvestigationPanel({ investigation, busy, onStart }: Props) {
             </li>
           ))}
         </ol>
+        </>
       )}
     </section>
   );

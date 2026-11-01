@@ -39,7 +39,7 @@ export function IncidentDashboard() {
   if (state.phase === "error") {
     return (
       <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 p-6">
-        <h1 className="text-lg font-semibold text-danger">Could not load incidents</h1>
+        <h2 className="text-lg font-semibold text-danger">Could not load incidents</h2>
         <p className="mt-1 text-sm text-muted">{state.message}</p>
         <button
           type="button"
