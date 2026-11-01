@@ -61,11 +61,11 @@ class DictRepository:
             raise IncidentNotFoundError("Incident not found.")
         return self._rows[incident_id][0]
 
-    def get_applied_remediation(self, incident_id: str) -> str | None:
+    def get_applied_remediation(self, incident_id: str, owner: str = "anonymous") -> str | None:
         applied = self._rows[incident_id][1]
         return applied[-1] if applied else None
 
-    def record_remediation(self, incident_id: str, action_id: str) -> bool:
+    def record_remediation(self, incident_id: str, action_id: str, owner: str = "anonymous") -> bool:
         applied = self._rows[incident_id][1]
         if applied and applied[-1] == action_id:
             return False

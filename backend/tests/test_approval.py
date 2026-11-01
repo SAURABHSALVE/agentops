@@ -66,9 +66,9 @@ def test_duplicate_approvals_run_the_action_once(sim: Simulator) -> None:
     calls: list[str] = []
     real = sim.execute_remediation
 
-    def counting(incident_id: str, action_id: str) -> Any:
+    def counting(incident_id: str, action_id: str, owner: str = "anonymous") -> Any:
         calls.append(action_id)
-        return real(incident_id, action_id)
+        return real(incident_id, action_id, owner)
 
     sim.execute_remediation = counting  # type: ignore[method-assign]
     client = TestClient(create_app(simulator=sim))

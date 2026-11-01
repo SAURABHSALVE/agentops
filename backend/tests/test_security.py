@@ -61,6 +61,7 @@ def test_config_endpoint_tells_the_ui_what_it_needs_and_nothing_secret(sim: Simu
     assert body == {
         "data_mode": "simulated",
         "write_access": "code_required",
+        "auth": {"mode": "none"},
         "provider": {"kind": "mock", "label": "Mock provider: deterministic rule-based policy, not an LLM"},
     }
     assert CODE not in str(body)

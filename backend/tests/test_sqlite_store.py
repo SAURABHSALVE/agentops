@@ -13,6 +13,7 @@ from app.agent.models import ProviderInfo
 from app.agent.sqlite_store import SqliteInvestigationStore
 from app.config import Settings
 from app.errors import InvestigationInProgressError, InvestigationNotFoundError
+from app.identity import ANONYMOUS_OWNER as OWNER
 from app.main import create_app
 from app.repository import InMemoryIncidentRepository
 from app.simulator.service import Simulator
@@ -28,23 +29,23 @@ def db(tmp_path: Path) -> Path:
 
 def test_creates_the_directory_and_round_trips_a_record(db: Path) -> None:
     store = SqliteInvestigationStore(db)
-    created = store.create("INC-1001", INFO, NOW)
+    created = store.create(OWNER, "INC-1001", INFO, NOW)
     assert created.id == "inv-0001" and db.exists()
-    assert store.get("inv-0001") == created
-    assert store.latest_for("INC-1001") == created and store.latest_for("INC-1002") is None
+    assert store.get(OWNER, "inv-0001") == created
+    assert store.latest_for(OWNER, "INC-1001") == created and store.latest_for(OWNER, "INC-1002") is None
     with pytest.raises(InvestigationNotFoundError):
-        store.get("inv-0099")
+        store.get(OWNER, "inv-0099")
 
 
 def test_one_running_investigation_per_incident_and_ids_keep_counting(db: Path) -> None:
     store = SqliteInvestigationStore(db)
-    first = store.create("INC-1001", INFO, NOW)
+    first = store.create(OWNER, "INC-1001", INFO, NOW)
     with pytest.raises(InvestigationInProgressError):
-        store.create("INC-1001", INFO, NOW)
-    assert store.create("INC-1002", INFO, NOW).id == "inv-0002"
-    store.save(first.model_copy(update={"status": "completed"}))
-    assert store.create("INC-1001", INFO, NOW).id == "inv-0003"
-    assert [i.id for i in store.list_for_incident("INC-1001")] == ["inv-0001", "inv-0003"]
+        store.create(OWNER, "INC-1001", INFO, NOW)
+    assert store.create(OWNER, "INC-1002", INFO, NOW).id == "inv-0002"
+    store.save(OWNER, first.model_copy(update={"status": "completed"}))
+    assert store.create(OWNER, "INC-1001", INFO, NOW).id == "inv-0003"
+    assert [i.id for i in store.list_for_incident(OWNER, "INC-1001")] == ["inv-0001", "inv-0003"]
 
 
 def test_concurrent_starts_for_one_incident_admit_exactly_one(db: Path) -> None:
@@ -53,7 +54,7 @@ def test_concurrent_starts_for_one_incident_admit_exactly_one(db: Path) -> None:
 
     def start() -> None:
         try:
-            results.append(store.create("INC-1001", INFO, NOW).id)
+            results.append(store.create(OWNER, "INC-1001", INFO, NOW).id)
         except InvestigationInProgressError:
             results.append("busy")
 
@@ -67,48 +68,48 @@ def test_concurrent_starts_for_one_incident_admit_exactly_one(db: Path) -> None:
 
 def test_history_survives_a_restart_and_a_second_store_sees_it(db: Path) -> None:
     store = SqliteInvestigationStore(db)
-    done = store.create("INC-1001", INFO, NOW).model_copy(update={"status": "completed"})
-    store.save(done)
+    done = store.create(OWNER, "INC-1001", INFO, NOW).model_copy(update={"status": "completed"})
+    store.save(OWNER, done)
     reopened = SqliteInvestigationStore(db)
-    assert reopened.get(done.id) == done
-    assert reopened.create("INC-1001", INFO, NOW).id == "inv-0002"  # ids do not restart
+    assert reopened.get(OWNER, done.id) == done
+    assert reopened.create(OWNER, "INC-1001", INFO, NOW).id == "inv-0002"  # ids do not restart
 
 
 def test_a_run_interrupted_by_a_restart_is_failed_not_stuck(db: Path) -> None:
     store = SqliteInvestigationStore(db)
-    stuck = store.create("INC-1001", INFO, NOW)
+    stuck = store.create(OWNER, "INC-1001", INFO, NOW)
     reopened = SqliteInvestigationStore(db)  # the "restart"
-    recovered = reopened.get(stuck.id)
+    recovered = reopened.get(OWNER, stuck.id)
     assert recovered.status == "failed" and recovered.failure is not None
     assert recovered.failure.code == "internal_error" and "restarted" in recovered.failure.message
     assert recovered.finished_at is not None
-    assert reopened.create("INC-1001", INFO, NOW).id == "inv-0002"  # the incident is not blocked
+    assert reopened.create(OWNER, "INC-1001", INFO, NOW).id == "inv-0002"  # the incident is not blocked
 
 
 def test_save_of_an_unknown_record_does_nothing(db: Path, tmp_path: Path) -> None:
-    other = SqliteInvestigationStore(tmp_path / "other.sqlite3").create("INC-1001", INFO, NOW)
+    other = SqliteInvestigationStore(tmp_path / "other.sqlite3").create(OWNER, "INC-1001", INFO, NOW)
     store = SqliteInvestigationStore(db)
-    store.save(other)
+    store.save(OWNER, other)
     with pytest.raises(InvestigationNotFoundError):
-        store.get(other.id)
+        store.get(OWNER, other.id)
 
 
 def test_corrupt_rows_are_treated_as_absent_not_served(db: Path) -> None:
     store = SqliteInvestigationStore(db)
-    rec = store.create("INC-1001", INFO, NOW)
-    store.save(rec.model_copy(update={"status": "completed"}))
+    rec = store.create(OWNER, "INC-1001", INFO, NOW)
+    store.save(OWNER, rec.model_copy(update={"status": "completed"}))
     with sqlite3.connect(db) as raw:
         raw.execute("UPDATE investigations SET body = '{not valid' WHERE id = ?", (rec.id,))
     with pytest.raises(InvestigationNotFoundError):
-        store.get(rec.id)
-    assert store.latest_for("INC-1001") is None and store.list_for_incident("INC-1001") == []
+        store.get(OWNER, rec.id)
+    assert store.latest_for(OWNER, "INC-1001") is None and store.list_for_incident(OWNER, "INC-1001") == []
 
 
 def test_values_are_bound_not_interpolated(db: Path) -> None:
     store = SqliteInvestigationStore(db)
     with pytest.raises(InvestigationNotFoundError):
-        store.get("inv-1' OR '1'='1")
-    assert store.latest_for("INC-1001' OR '1'='1") is None
+        store.get(OWNER, "inv-1' OR '1'='1")
+    assert store.latest_for(OWNER, "INC-1001' OR '1'='1") is None
 
 
 def test_the_full_workflow_survives_an_app_restart(tmp_path: Path) -> None:
