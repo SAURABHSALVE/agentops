@@ -49,10 +49,12 @@ Server errors return a generic message to the user and log only the error *type*
   repository (see DECISIONS D-032). Redeploy `AgentOps-GitHubOidc` with an admin (non-root) identity.
 
 ## Abuse and cost
-Writes are open unless an access code is set. If someone is burning your quota:
-1. Set an access code (README, "Turning AWS deploys on" and the access-code section) and redeploy.
-2. API Gateway throttling and the per-process rate limit are the backstops; the real cost cap for live mode is an
-   **OpenAI project spend limit**, which you must set in the OpenAI dashboard before enabling live mode.
+Writes on the public site are open. The access code and its secret exist **only in live mode** (`-c agentProvider=openai`,
+infra `backend_stack.py`); the current mock deployment has none, and a mock investigation costs only a few Lambda
+milliseconds. If someone is hammering it:
+1. API Gateway throttling and the per-process rate limit are the backstops. Check the Lambda invocation graph **(console)**.
+2. Before ever enabling live mode, set an **OpenAI project spend limit** in the OpenAI dashboard: it is the real cost cap.
+   Live mode also creates the access code, which then gates every write.
 3. As a last resort run `scripts/teardown.sh --stage prod` (it asks you to type the stage name; `--include-data` also removes the table).
 
 ## Data and privacy
