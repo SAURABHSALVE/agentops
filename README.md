@@ -4,7 +4,9 @@ AI-assisted incident investigation over **simulated demo telemetry**. An agent u
 tools to propose an evidence-backed root cause; a human approves a bounded, simulated remediation; the app verifies the
 result and keeps an audit timeline. The model provider is a deterministic mock by default; a live OpenAI model is opt-in.
 
-> **Status (Phases 1 to 5 built and tested locally)**
+> **Status: deployed to AWS and live (first deploy 2026-11-01, mock provider, simulated data)**
+> - **Live demo:** https://d43lcfavuw4eb.cloudfront.net (CloudFront, S3, API Gateway, Lambda, DynamoDB). A push to `main`
+>   runs the checks, deploys and smoke-tests the site; see "Turning AWS deploys on".
 > - **Backend** (FastAPI): incidents, diagnostics, a bounded investigation loop with two providers (offline mock and
 >   live OpenAI), evidence grounding, a server-side approval gate, simulated remediation with separate verification,
 >   SQLite persistence, a derived audit timeline, and public-demo protections (access code, rate limits). 300+ tests,
@@ -13,10 +15,12 @@ result and keeps an audit timeline. The model provider is a deterministic mock b
 >   access code when a deployment needs one. `scripts/e2e-ui.mjs` clicks through the real UI against the real API.
 > - **Evaluation:** the seven required cases are an offline test suite; mock and live-model results are measured and
 >   reported with their weaknesses in [docs/EVALUATION.md](docs/EVALUATION.md).
-> - **Not done:** the AWS deployment itself (see "Production readiness" for what blocks it).
-> - **AWS deployment**: defined as code and CI/CD below. Verified locally: unit tests, `cdk synth --strict` with cdk-nag,
->   a Docker-free Lambda build. **Not yet verified until the first real deploy:** the live site, the OIDC role
->   assumption from GitHub, and the PR `cdk diff` permissions. Section [First deploy](#first-deploy-one-time) lists them.
+> - **Verified on the live site:** the home page and deep links load, an investigation runs, approval and verification
+>   work, and state persists in DynamoDB. **Not enabled live:** the OpenAI provider (needs `-c agentProvider=openai`,
+>   secrets and an OpenAI spend limit) and a login system (writes are open or behind one shared access code).
+> - **Product polish (Phases 9 to 10 and parts of 11 and 14):** a plain-English home page and answer card, a
+>   "was this useful?" feedback route, secret and personal-data redaction on telemetry text, a request body cap and
+>   request ids. See [docs/RUNBOOK.md](docs/RUNBOOK.md) for operating it.
 
 ## How it works (what runs locally)
 
@@ -45,7 +49,7 @@ See [docs/DEMO.md](docs/DEMO.md) for a 5-minute walkthrough and [docs/EVALUATION
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Findings](docs/screenshots/inc-1001-findings.png) |
 | ![Verification failed](docs/screenshots/inc-1006-not-resolved.png) | ![Prompt injection](docs/screenshots/inc-1005.png) |
 
-## Architecture (AWS deployment, not yet deployed)
+## Architecture (AWS deployment, live)
 
 ```mermaid
 flowchart LR
@@ -185,11 +189,10 @@ no prompts or model output in logs, security headers, API throttling, alarms, a 
 (DynamoDB item calls and two named secrets only), and a strict cdk-nag synth.
 
 **Not done, and why:**
-- **Nothing is deployed.** The only AWS identity on this machine is the **root user**, which this project forbids using
-  for deployment (SECURITY.md, D-020). To deploy, create a least-privilege identity yourself (an IAM Identity Center
-  profile or a role for the bootstrap, then the OIDC deploy role in `infra/`), sign in from your own terminal, and follow
-  "First deploy" below with `-c agentProvider=openai` for the live model. The first real deploy will also be the first
-  verification of the live site, the OIDC role assumption and the PR `cdk diff` permissions.
+- **Deployed with the mock provider on simulated data.** The first deploy (2026-11-01) verified the live site, the GitHub
+  OIDC role assumption and the deploy pipeline. For the live model, redeploy with `-c agentProvider=openai`, store the
+  key in Secrets Manager and set an OpenAI project spend limit first. **Writes on the public site are open** unless an
+  access code is configured; treat it as a demo, not a multi-user product (no per-user login yet).
 - A live investigation must finish inside API Gateway's 30 s limit; typical runs take 6 to 11 s and the model call times
   out at 12 s, but a slow provider day can fail a run (it ends `failed`, never with a made-up answer).
 - The per-process rate limit is a backstop, not a global cap; the API throttle and an OpenAI project spend limit are the
@@ -300,7 +303,7 @@ runtime role (four DynamoDB calls on one table), private bucket reachable only t
   off-list action offered, 2 of 36 runs rejected by validation, and over-stated confidence on the ambiguous incident
   (reported, not hidden). Average 6 to 11 s and 6k to 12k tokens per investigation.
 - Wrote AWS infrastructure as code (CDK, cdk-nag clean, 35 template tests, least-privilege roles, GitHub OIDC CI/CD);
-  **not deployed**.
+  deployed and smoke-tested on 2026-11-01.
 
 ## Clean up locally
 Stop both servers. Delete `backend/.data/` (the SQLite file), `backend/.venv/`, `frontend/node_modules/`,
