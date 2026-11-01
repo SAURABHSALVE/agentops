@@ -11,15 +11,15 @@ Where `AgentOps_AI_Claude_Code_Build_Plan.md` mentions Bedrock or AgentCore, thi
 | 2 FastAPI + deterministic simulator | **Approved** by the user (`APPROVE PHASE 2`, 2026-10-28). Verified locally: 84 tests, ruff, mypy |
 | 3A Offline investigator + API/UI integration | **Built and tested** (user asked for phases through 5, 2026-10-30): mock provider, bounded coordinator, evidence grounding, API, UI wired to it |
 | 3B Live OpenAI integration | **Built and tested** against the live API with `gpt-4.1-mini`; see DECISIONS D-026 and the measured results in backend/evaluation |
-| 6 (infrastructure and CI/CD part) | **Pulled forward at the user's request (2026-10-30).** CDK stacks, GitHub Actions with OIDC, alarms, budget, teardown: written and tested locally, **not yet deployed**. Platform decision recorded as D-023/D-024. Live OpenAI hosting and public-demo abuse controls remain Phase 6/3B work |
+| 6 (infrastructure and CI/CD part) | **Pulled forward at the user's request (2026-10-30).** CDK stacks, GitHub Actions with OIDC, alarms, budget, teardown: **deployed 2026-11-01** (Deploy #7, smoke-tested). Platform decision recorded as D-023/D-024. Live OpenAI hosting and public-demo abuse controls remain Phase 6/3B work |
 | 4 Persistence and timeline | **Built and tested**: SQLite store, restart recovery, derived timeline, duplicate-start protection |
 | 5 Approval, remediation, verification | **Built and tested**: server-side gate, runs once, verification is a separate state, INC-1006 verification failure |
-| 6 Deployment and operations | **Code, tests and docs done; not deployed.** Access code, rate limits, secrets, opt-in live mode, CDK tested. Blocked on a least-privilege AWS identity (only root exists; D-029) |
+| 6 Deployment and operations | **Done and live** (mock provider, simulated data). Access code, rate limits, secrets, opt-in live mode, CDK, OIDC CI/CD. The OpenAI provider is not enabled on AWS yet |
 | 7 Evaluation and hardening | **Done**: seven-case offline suite, measured mock and live runs, weaknesses reported (docs/EVALUATION.md) |
 | 8 Portfolio finish | **Done** except live-site screenshots: README, diagram, demo script, screenshots, cleanup, measured résumé bullets |
 
 Current reality: the UI is wired to the API. The mock provider is the default; the OpenAI provider is opt-in. Local storage
-is a SQLite file. Nothing is deployed.
+is a SQLite file. The site is also deployed on AWS (see README); DynamoDB replaces SQLite there.
 
 ## What this is
 A portfolio MVP: pick a *simulated* production incident, let an LLM agent investigate it with allowlisted read-only

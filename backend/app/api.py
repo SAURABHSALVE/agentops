@@ -1,14 +1,15 @@
 """HTTP routes: incidents, simulated diagnostics, investigations and the approval gate.
 
-Writes: start an investigation, and approve or reject the remediation it proposed. Neither takes a
-request body, so a client cannot choose an action, a tool or an incident beyond the path ids.
+Writes: start an investigation, approve or reject the remediation it proposed, and leave feedback. The
+first three take no request body, so a client cannot choose an action, a tool or an incident beyond the path
+ids. Feedback takes a verdict and a short note, which are stored and never reach a model or a tool.
 """
 
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, Path, Query, Request
 
-from app.agent.models import Investigation
+from app.agent.models import FeedbackRequest, Investigation
 from app.agent.service import InvestigationService
 from app.config import APP_VERSION
 from app.schemas import (
@@ -197,3 +198,15 @@ def approve_remediation(investigation_id: InvestigationIdPath, request: Request)
 )
 def reject_remediation(investigation_id: InvestigationIdPath, request: Request) -> Investigation:
     return _investigations(request).reject(investigation_id)
+
+
+@router.post(
+    "/api/investigations/{investigation_id}/feedback",
+    response_model=Investigation,
+    responses=_START_ERRORS,
+    tags=["feedback"],
+    dependencies=[Depends(require_access)],
+)
+def give_feedback(investigation_id: InvestigationIdPath, body: FeedbackRequest, request: Request) -> Investigation:
+    """Say whether a finished investigation helped. The note is stored for the team and never sent to a model."""
+    return _investigations(request).give_feedback(investigation_id, body)

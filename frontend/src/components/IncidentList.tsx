@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { formatDateTime } from "@/lib/format";
+import { DEMO_HINTS } from "@/lib/plain";
 import type { IncidentStatus, IncidentSummary, Severity } from "@/lib/types";
 import { SeverityBadge, StatusBadge } from "./badges";
 
@@ -34,9 +35,9 @@ export function IncidentList({ incidents }: { incidents: IncidentSummary[] }) {
   return (
     <section aria-labelledby="incidents-heading">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-        <h1 id="incidents-heading" className="text-xl font-semibold tracking-tight">
+        <h2 id="incidents-heading" className="text-xl font-semibold tracking-tight">
           Incidents
-        </h1>
+        </h2>
         <form
           role="search"
           aria-label="Filter incidents"
@@ -113,12 +114,18 @@ export function IncidentList({ incidents }: { incidents: IncidentSummary[] }) {
                 <span className="min-w-0">
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-xs text-muted">{i.id}</span>
+                    {DEMO_HINTS[i.id] && (
+                      <span className="rounded border border-accent/40 px-1.5 py-0.5 text-xs text-accent">
+                        {DEMO_HINTS[i.id].tag}
+                      </span>
+                    )}
                     <SeverityBadge severity={i.severity} />
                     <StatusBadge status={i.status} />
                   </span>
                   <span className="mt-1 block font-medium">{i.title}</span>
                   <span className="block text-sm text-muted">
                     <span className="font-mono">{i.service}</span>
+                    {DEMO_HINTS[i.id] && <span> · {DEMO_HINTS[i.id].hint}</span>}
                   </span>
                 </span>
                 <span className="text-xs text-muted sm:text-right">

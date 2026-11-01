@@ -6,13 +6,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from app.agent.coordinator import FAILURE_MESSAGES, Coordinator, Limits
-from app.agent.models import Failure, Investigation, ProviderInfo, RemediationRecord
+from app.agent.models import Failure, Feedback, FeedbackRequest, Investigation, ProviderInfo, RemediationRecord
 from app.agent.provider import LLMProvider
 from app.agent.store import InvestigationStore
 from app.agent.timeline import effective_status, events_for
 from app.agent.tools import ToolRunner
 from app.config import Settings
-from app.errors import AgentOpsError, InvestigationNotFoundError, RemediationStateError
+from app.errors import AgentOpsError, FeedbackNotAllowedError, InvestigationNotFoundError, RemediationStateError
 from app.schemas import GetIncidentArgs, IncidentDetail, IncidentSummary, TimelineEvent
 from app.simulator.service import Simulator
 
@@ -158,6 +158,20 @@ class InvestigationService:
             if record.status != "proposed":
                 raise RemediationStateError("This remediation was already approved and cannot be rejected.")
             return self._save_state(inv, record.model_copy(update={"status": "rejected", "decided_at": self._clock()}))
+
+    def give_feedback(self, investigation_id: str, request: FeedbackRequest) -> Investigation:
+        """Record whether a finished answer helped. Replaces an earlier verdict; never reaches a model."""
+        with self._approval_lock:  # same lock as approvals: both rewrite the whole record
+            inv = self._store.get(investigation_id)
+            if inv.status == "running":
+                raise FeedbackNotAllowedError("This investigation is still running; rate it when it finishes.")
+            updated = inv.model_copy(
+                update={
+                    "feedback": Feedback(helpful=request.helpful, comment=request.comment or None, at=self._clock())
+                }
+            )
+            self._store.save(updated)
+            return updated
 
     def _decidable(self, investigation_id: str) -> tuple[Investigation, RemediationRecord]:
         inv = self._store.get(investigation_id)

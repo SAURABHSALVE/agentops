@@ -149,3 +149,13 @@ SECURITY.md and D-020 forbid root for deployment. Verified read-only (STS identi
 - *Decision:* both AWS jobs are gated on the repository variable `AWS_DEPLOY_ENABLED == 'true'`. When it is not set, a short job named "AWS jobs are off" prints a notice and a run summary, so a skipped AWS job cannot be mistaken for a passing one. Backend, frontend, infra (with `cdk synth --strict` for dev and prod) and shell checks are untouched and still run on every pull request and every push to `main`.
 - *Rejected:* `continue-on-error` on the AWS step (it would hide real failures once AWS is on), deleting the diff job, and turning off immutable subjects on the repository (weakens the trust, see D-032).
 - *Turning it on:* README, "Turning AWS deploys on". Branch protection is not available on this plan, so nothing here is enforced by GitHub rules; the variable is the switch.
+
+**D-034 · accepted · Redact telemetry text at the source seam, before matching.**
+- *Why:* the simulated and lab data hold no secrets, but a real source (CloudWatch) will: emails, tokens, passwords, keys. If redaction were left to each source, the first one written could leak them to a model and the UI.
+- *Decision:* `app/redaction.py` runs inside the simulator service on log messages and release notes, so every `TelemetrySource` is covered. Logs are redacted *before* the search matches, so a query cannot confirm a guessed secret. A fixed set of shapes (not an ML detector), with bounded quantifiers and an input cap because log text is attacker-influenced; a regression test pins a hostile 100 KB line under one second (the first version took about 7 s).
+- *Limits:* a safety net, not a guarantee. A secret in an unusual shape will pass. Shipped datasets are asserted unchanged by it.
+
+**D-035 · accepted · Feedback is the one write that takes a body, and its schema is pinned.**
+- *Why:* the product needs to learn whether answers helped, and a tester needs a way to say so.
+- *Decision:* `POST /api/investigations/{id}/feedback` takes `{helpful, comment<=500}`. It sits behind the access gate, is stored on the investigation, and is never passed to a model or a tool. Because "no write route takes a body" was a structural guard, the guard now allows exactly this one route and fails if its schema grows beyond those two fields.
+- *Also:* request bodies over 16 KB are refused with 413, and every response has an `X-Request-Id` that matches a one-line log entry (method, path, status, duration; never query, body or access code).

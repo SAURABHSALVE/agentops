@@ -106,6 +106,12 @@ export interface RemediationState {
   error: string | null;
 }
 
+export interface Feedback {
+  helpful: boolean;
+  comment: string | null;
+  at: string;
+}
+
 export interface Investigation {
   id: string;
   incident_id: string;
@@ -118,5 +124,6 @@ export interface Investigation {
   failure: Failure | null;
   remediation_state: RemediationState | null;
   usage: { rounds: number; tool_calls: number; input_tokens: number; output_tokens: number };
+  feedback: Feedback | null;
   simulated: true;
 }

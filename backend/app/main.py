@@ -1,5 +1,7 @@
 import logging
 import os
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ from app.api import router
 from app.config import APP_VERSION, Settings, load_env_file
 from app.errors import (
     AgentOpsError,
+    FeedbackNotAllowedError,
     IncidentNotFoundError,
     InvestigationInProgressError,
     InvestigationNotFoundError,
@@ -33,6 +36,9 @@ from app.simulator.service import Simulator
 from app.simulator.source import FixtureSource, TelemetrySource
 
 logger = logging.getLogger("agentops")
+logger.setLevel(logging.INFO)  # Lambda forwards this to CloudWatch; the default would drop the per-request line
+
+MAX_BODY_BYTES = 16 * 1024  # the largest real body is a 500-character feedback note
 
 _STATUS_BY_CODE = {
     IncidentNotFoundError.code: 404,
@@ -40,6 +46,7 @@ _STATUS_BY_CODE = {
     InvestigationNotFoundError.code: 404,
     InvestigationInProgressError.code: 409,
     RemediationStateError.code: 409,
+    FeedbackNotAllowedError.code: 409,
     UnauthorizedError.code: 401,
     RateLimitedError.code: 429,
 }
@@ -96,6 +103,37 @@ def create_app(
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         if request.url.path.startswith("/api/"):
             response.headers.setdefault("Cache-Control", "no-store")
+        return response
+
+    @app.middleware("http")
+    async def _limits_and_trace(request: Request, call_next: Any) -> Any:
+        """Refuse oversized bodies, then tag the request with an id and log one line about it.
+
+        The log line holds the method, the path (ids only; no query string, no body) and the outcome, so a
+        support question ("what happened at 14:02?") can be answered from CloudWatch without guessing.
+        """
+        request_id = uuid.uuid4().hex[:16]
+        started = time.perf_counter()
+        declared = request.headers.get("content-length", "0")
+        if not declared.isdigit():
+            response: Any = _envelope(400, ErrorDetail(code="invalid_request", message="Invalid Content-Length."))
+        elif int(declared) > MAX_BODY_BYTES:
+            response = _envelope(413, ErrorDetail(code="payload_too_large", message="Request body is too large."))
+        else:
+            try:
+                response = await call_next(request)
+            except Exception:  # noqa: BLE001 - the unhandled-error handler normally answers; this is the last resort
+                logger.error("request %s crashed before a response", request_id)
+                response = _envelope(500, ErrorDetail(code="internal_error", message="Internal server error."))
+        response.headers["X-Request-Id"] = request_id
+        logger.info(
+            "request %s %s %s -> %s in %d ms",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            (time.perf_counter() - started) * 1000,
+        )
         return response
 
     app.add_middleware(

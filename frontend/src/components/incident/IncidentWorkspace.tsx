@@ -7,6 +7,7 @@ import { useWorkspace } from "@/lib/use-workspace";
 import { AccessCode } from "../AccessCode";
 import { SeverityBadge, StatusBadge } from "../badges";
 import { EvidencePanel } from "./EvidencePanel";
+import { FeedbackBox } from "./FeedbackBox";
 import { InvestigationPanel } from "./InvestigationPanel";
 import { RemediationPanel } from "./RemediationPanel";
 import { Timeline } from "./Timeline";
@@ -84,6 +85,11 @@ export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
         <div className="space-y-4">
           <InvestigationPanel investigation={w.investigation} busy={w.busy} onStart={() => void w.start()} />
           <EvidencePanel investigation={w.investigation} />
+          <FeedbackBox
+            investigation={w.investigation}
+            busy={w.busy}
+            onSend={(helpful, comment) => void w.sendFeedback(helpful, comment)}
+          />
           <RemediationPanel
             investigation={w.investigation}
             busy={w.busy}

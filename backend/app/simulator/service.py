@@ -12,6 +12,7 @@ from app.errors import (
     RemediationNotApplicableError,
     UnknownRemediationError,
 )
+from app.redaction import redact
 from app.repository import IncidentRepository
 from app.schemas import (
     ActionResult,
@@ -59,9 +60,11 @@ class Simulator:
         incident = self._repo.get_incident(args.incident_id)
         start = incident.started_at - LEAD
         needle = args.query.lower()
+        # Redact first, then match: a search must not be able to confirm a secret it cannot see.
+        safe = (e.model_copy(update={"message": redact(e.message)}) for e in self._source.logs(incident.id))
         matches = [
             e
-            for e in self._source.logs(incident.id)
+            for e in safe
             if start <= e.timestamp <= incident.window_end
             and (needle in e.message.lower() or needle == e.level.lower())
             and (args.level is None or e.level == args.level)
@@ -90,7 +93,7 @@ class Simulator:
         as_of = incident.window_end
         since = as_of - timedelta(hours=args.hours)
         found = [
-            d
+            d.model_copy(update={"summary": redact(d.summary)})
             for d in self._source.deployments(incident.service, incident.started_at)
             if since <= d.deployed_at <= as_of
         ]
