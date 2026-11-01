@@ -17,6 +17,7 @@ from agentops_infra.monitoring_stack import MonitoringStack
 ACCOUNT = "123456789012"
 ENV = cdk.Environment(account=ACCOUNT, region="us-east-1")
 REPO = "SAURABHSALVE/agentops"
+SUBJECT_PREFIX = "repo:SAURABHSALVE@90780335/agentops@1437085899"  # what GitHub signs for this repository
 EMAIL = "alerts@example.com"
 PLACEHOLDER = Path(__file__).resolve().parent.parent / "placeholder_site"
 
@@ -72,7 +73,7 @@ def prod(fake_backend: Path) -> Built:
 @pytest.fixture(scope="session")
 def oidc() -> Template:
     app = cdk.App()
-    return Template.from_stack(GitHubOidcStack(app, "Oidc", repo=REPO, env=ENV))
+    return Template.from_stack(GitHubOidcStack(app, "Oidc", subject_prefix=SUBJECT_PREFIX, env=ENV))
 
 
 @pytest.fixture(scope="session")

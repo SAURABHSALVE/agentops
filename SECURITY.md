@@ -17,7 +17,9 @@ Portfolio MVP, not a production system. All data is synthetic by default. Revise
   user currently has long-lived access keys is unverified; check in the console and delete any that exist.
 - Local runs in the default mock mode need no credentials at all.
 - **CI/CD (D-023):** GitHub Actions authenticates to AWS with OIDC, never with stored keys. The deploy role trusts exactly
-  `repo:SAURABHSALVE/agentops:ref:refs/heads/main`; the pull-request role trusts `...:pull_request` and can only assume the
+  `repo:SAURABHSALVE@90780335/agentops@1437085899:ref:refs/heads/main` (GitHub's immutable subject, which carries the numeric
+  owner and repository ids, so a renamed or re-registered repository name cannot impersonate this one); the pull-request
+  role trusts `...:pull_request` and can only assume the
   CDK lookup role. Both can do nothing except `sts:AssumeRole` on CDK bootstrap roles. The OIDC stack is deployed by a human,
   not by CI. Known limit: the default CDK CloudFormation execution role is administrator-level, so protect `main` and consider
   bootstrapping with a scoped `--cloudformation-execution-policies`.

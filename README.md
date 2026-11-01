@@ -152,6 +152,11 @@ Python 3.12+, and the GitHub CLI (`gh`) if you want to set variables from the te
 aws login                      # or: aws sso login --profile <profile>
 scripts/bootstrap.sh           # installs the toolchain, `cdk bootstrap`, deploys the OIDC stack (prompts before creating IAM roles)
 ```
+The trust policy must match the subject GitHub actually signs. Newer repositories use the immutable form
+`repo:OWNER@OWNER_ID/NAME@REPO_ID`; read yours with `gh api repos/OWNER/NAME/actions/oidc/customization/sub` and set
+`githubSubjectPrefix` in `infra/cdk.json` (the stack refuses a prefix for a different repository). If the Deploy job fails
+at "configure-aws-credentials" with `Not authorized to perform sts:AssumeRoleWithWebIdentity`, this is the first thing to check.
+
 Then set three repository **variables** (not secrets; none of them is a credential). `bootstrap.sh` prints the exact
 commands with your role ARNs filled in:
 

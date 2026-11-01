@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """CDK entry point.
 
-cdk deploy AgentOps-GitHubOidc -c githubRepo=owner/name       one-off, admin identity, no stage needed
+cdk deploy AgentOps-GitHubOidc                                one-off, admin identity, no stage needed
+(repository and its GitHub subject prefix come from cdk.json: githubRepo, githubSubjectPrefix)
 cdk deploy 'AgentOps-dev-*'  -c stage=dev  -c alertEmail=you@example.com
 cdk deploy 'AgentOps-prod-*' -c stage=prod -c alertEmail=...   (CI does this on pushes to main)
 """
@@ -14,7 +15,7 @@ from cdk_nag import AwsSolutionsChecks
 
 from agentops_infra import nag
 from agentops_infra.backend_stack import BackendStack
-from agentops_infra.config import REGION, github_repo, stage_config
+from agentops_infra.config import REGION, github_subject_prefix, stage_config
 from agentops_infra.data_stack import DataStack
 from agentops_infra.frontend_stack import FrontendStack
 from agentops_infra.github_oidc_stack import GitHubOidcStack
@@ -30,7 +31,7 @@ env = cdk.Environment(account=os.environ.get("CDK_DEFAULT_ACCOUNT"), region=REGI
 oidc = GitHubOidcStack(
     app,
     "AgentOps-GitHubOidc",
-    repo=github_repo(app),
+    subject_prefix=github_subject_prefix(app),
     existing_provider_arn=app.node.try_get_context("existingOidcProviderArn"),
     env=env,
 )

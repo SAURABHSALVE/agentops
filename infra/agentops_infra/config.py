@@ -13,6 +13,8 @@ STAGES = ("dev", "prod")
 REGION = "us-east-1"
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _REPO = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
+# GitHub's subject prefix: "repo:OWNER/NAME", or the immutable "repo:OWNER@OWNER_ID/NAME@REPO_ID".
+_SUBJECT_PREFIX = re.compile(r"^repo:([A-Za-z0-9-]+)(?:@\d+)?/([A-Za-z0-9._-]+)(?:@\d+)?$")
 _MODEL = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 AGENT_PROVIDERS = ("mock", "openai")
 
@@ -83,3 +85,22 @@ def github_repo(scope: Construct) -> str:
     if not repo or not _REPO.match(repo):
         raise ConfigError("githubRepo must look like 'owner/name'.")
     return repo
+
+
+def github_subject_prefix(scope: Construct) -> str:
+    """The `sub` claim prefix GitHub puts in its tokens for this repository.
+
+    Repositories with immutable subject claims (GitHub's default for newer ones) sign
+    `repo:OWNER@OWNER_ID/NAME@REPO_ID:...`, not `repo:OWNER/NAME:...`; a trust policy written for the
+    name-based form never matches. Read the real value with
+    `gh api repos/OWNER/NAME/actions/oidc/customization/sub` (field `sub_claim_prefix`). It must name the same
+    repository as `githubRepo`, so a typo cannot silently trust a different one.
+    """
+    repo = github_repo(scope)
+    raw = _context(scope, "githubSubjectPrefix")
+    if not raw:
+        return f"repo:{repo}"
+    match = _SUBJECT_PREFIX.match(raw)
+    if not match or f"{match.group(1)}/{match.group(2)}" != repo:
+        raise ConfigError("githubSubjectPrefix must be GitHub's 'repo:OWNER@ID/NAME@ID' for the same githubRepo.")
+    return raw
