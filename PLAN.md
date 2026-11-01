@@ -17,7 +17,7 @@ Where `AgentOps_AI_Claude_Code_Build_Plan.md` mentions Bedrock or AgentCore, thi
 | 6 Deployment and operations | **Done and live** (mock provider, simulated data). Access code, rate limits, secrets, opt-in live mode, CDK, OIDC CI/CD. The OpenAI provider is not enabled on AWS yet |
 | 7 Evaluation and hardening | **Done**: seven-case offline suite, measured mock and live runs, weaknesses reported (docs/EVALUATION.md) |
 | 8 Portfolio finish | **Done** except live-site screenshots: README, diagram, demo script, screenshots, cleanup, measured résumé bullets |
-| 12 Sign-in and per-user data | **Built and tested, not yet deployed** (branch `feat/phase-12-cognito-login`): Cognito user pool, PKCE sign-in, backend token verification, records per user in all three stores, 31-check browser test against a fake Cognito. Live behaviour is unverified until it is merged and deployed |
+| 12 Sign-in and per-user data | **Deployed 2026-11-02** (PR #9): Cognito user pool, PKCE sign-in, backend token verification, records per user in all three stores, 31-check browser test against a fake Cognito. Live: writes refused without sign-in, hosted page accepts the client and callback, Lambda reaches Cognito. A full human sign-up/sign-in is not yet checked |
 
 Current reality: the UI is wired to the API. The mock provider is the default; the OpenAI provider is opt-in. Local storage
 is a SQLite file. The site is also deployed on AWS (see README); DynamoDB replaces SQLite there.
