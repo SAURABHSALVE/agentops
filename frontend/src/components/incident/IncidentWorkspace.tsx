@@ -3,6 +3,7 @@
 import Link from "next/link";
 import NotFound from "@/app/not-found";
 import { formatDateTime, formatWindow } from "@/lib/format";
+import { useAuth } from "@/lib/use-auth";
 import { useWorkspace } from "@/lib/use-workspace";
 import { AccessCode } from "../AccessCode";
 import { SeverityBadge, StatusBadge } from "../badges";
@@ -24,6 +25,7 @@ function Skeleton() {
 
 export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
   const w = useWorkspace(incidentId);
+  const auth = useAuth();
 
   if (w.load === "loading") return <Skeleton />;
   if (w.load === "not_found") return <NotFound />;
@@ -83,7 +85,13 @@ export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <div className="space-y-4">
-          <InvestigationPanel investigation={w.investigation} busy={w.busy} onStart={() => void w.start()} />
+          <InvestigationPanel
+            investigation={w.investigation}
+            busy={w.busy}
+            onStart={() => void w.start()}
+            auth={auth}
+            onSignIn={() => auth.signIn()}
+          />
           <EvidencePanel investigation={w.investigation} />
           <FeedbackBox
             investigation={w.investigation}

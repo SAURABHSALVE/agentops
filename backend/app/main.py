@@ -16,16 +16,20 @@ from app.agent.service import InvestigationService
 from app.agent.sqlite_store import SqliteInvestigationStore
 from app.agent.store import InMemoryInvestigationStore, InvestigationStore
 from app.api import router
+from app.auth import TokenVerifier, build_verifier
 from app.config import APP_VERSION, Settings, load_env_file
 from app.errors import (
     AgentOpsError,
+    AuthUnavailableError,
     FeedbackNotAllowedError,
     IncidentNotFoundError,
+    InvalidTokenError,
     InvestigationInProgressError,
     InvestigationNotFoundError,
     MetricNotAvailableError,
     RateLimitedError,
     RemediationStateError,
+    SignInRequiredError,
     UnauthorizedError,
 )
 from app.repository import InMemoryIncidentRepository
@@ -48,6 +52,9 @@ _STATUS_BY_CODE = {
     RemediationStateError.code: 409,
     FeedbackNotAllowedError.code: 409,
     UnauthorizedError.code: 401,
+    SignInRequiredError.code: 401,
+    InvalidTokenError.code: 401,
+    AuthUnavailableError.code: 503,
     RateLimitedError.code: 429,
 }
 
@@ -79,6 +86,7 @@ def create_app(
     provider: LLMProvider | None = None,
     store: InvestigationStore | None = None,
     access: AccessGate | None = None,
+    verifier: TokenVerifier | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
@@ -95,6 +103,7 @@ def create_app(
     )
 
     app.state.access = access or AccessGate(load_access_code())
+    app.state.verifier = verifier or build_verifier(settings)  # None unless a Cognito user pool is configured
     app.state.limiter = RateLimiter(settings.rate_per_minute, settings.rate_per_hour)
 
     @app.middleware("http")
@@ -140,7 +149,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=list(settings.cors_allow_origins),
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", ACCESS_HEADER],
+        allow_headers=["Content-Type", "Authorization", ACCESS_HEADER],
     )
 
     @app.exception_handler(AgentOpsError)
@@ -149,6 +158,8 @@ def create_app(
         response = _envelope(status, ErrorDetail(code=exc.code, message=exc.message))
         if isinstance(exc, RateLimitedError):
             response.headers["Retry-After"] = str(exc.retry_after)
+        if isinstance(exc, SignInRequiredError | InvalidTokenError):
+            response.headers["WWW-Authenticate"] = "Bearer"
         return response
 
     @app.exception_handler(RequestValidationError)

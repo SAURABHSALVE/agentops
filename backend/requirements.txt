@@ -5,3 +5,5 @@ uvicorn==0.54.0
 pydantic==2.14.1
 mangum==0.22.0          # Lambda adapter (MIT); only app/lambda_handler.py imports it
 boto3==1.43.122         # DynamoDB store; Lambda provides its own copy at runtime
+PyJWT==2.15.1          # verifies Cognito access tokens (MIT); RS256 needs cryptography
+cryptography==50.0.2    # RSA signature check for PyJWT (Apache-2.0/BSD)

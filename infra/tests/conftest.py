@@ -7,6 +7,7 @@ import aws_cdk as cdk
 import pytest
 from aws_cdk.assertions import Template
 
+from agentops_infra.auth_stack import AuthStack
 from agentops_infra.backend_stack import BackendStack
 from agentops_infra.config import StageConfig
 from agentops_infra.data_stack import DataStack
@@ -30,15 +31,24 @@ class Built:
     frontend: Template
     monitoring: Template
     backend_stack: BackendStack
+    auth: Template | None = None  # None when built with auth="none"
 
 
-def build(stage: str, backend_dir: Path, agent_provider: str = "mock") -> Built:
+def build(stage: str, backend_dir: Path, agent_provider: str = "mock", auth: str = "cognito") -> Built:
     app = cdk.App()
-    cfg = StageConfig(stage=stage, alert_email=EMAIL, budget_limit_usd=10, agent_provider=agent_provider)
+    cfg = StageConfig(stage=stage, alert_email=EMAIL, budget_limit_usd=10, agent_provider=agent_provider, auth=auth)
     data = DataStack(app, "Data", cfg=cfg, env=ENV)
-    backend = BackendStack(app, "Backend", cfg=cfg, data=data, backend_dir=backend_dir, env=ENV)
+    auth_stack = AuthStack(app, "Auth", cfg=cfg, env=ENV) if cfg.sign_in else None
+    backend = BackendStack(app, "Backend", cfg=cfg, data=data, auth=auth_stack, backend_dir=backend_dir, env=ENV)
     frontend = FrontendStack(
-        app, "Frontend", backend=backend, site_dir=PLACEHOLDER, placeholder_dir=PLACEHOLDER, env=ENV
+        app,
+        "Frontend",
+        cfg=cfg,
+        backend=backend,
+        auth=auth_stack,
+        site_dir=PLACEHOLDER,
+        placeholder_dir=PLACEHOLDER,
+        env=ENV,
     )
     monitoring = MonitoringStack(app, "Monitoring", cfg=cfg, backend=backend, env=ENV)
     return Built(
@@ -48,6 +58,7 @@ def build(stage: str, backend_dir: Path, agent_provider: str = "mock") -> Built:
         Template.from_stack(frontend),
         Template.from_stack(monitoring),
         backend,
+        Template.from_stack(auth_stack) if auth_stack is not None else None,
     )
 
 
@@ -79,3 +90,9 @@ def oidc() -> Template:
 @pytest.fixture(scope="session")
 def live(fake_backend: Path) -> Built:
     return build("dev", fake_backend, agent_provider="openai")
+
+
+@pytest.fixture(scope="session")
+def open_demo(fake_backend: Path) -> Built:
+    """The deployment with sign-in switched off (-c auth=none): the open demo as it was before login."""
+    return build("dev", fake_backend, auth="none")

@@ -2,9 +2,13 @@
 
 Single table, partition key `pk` only. Item kinds:
   COUNTER              atomic id source (`n`)
-  INV#<id>             the investigation as JSON in `body` (+ `incident_id`, `status`)
-  LATEST#<incident>    pointer to the newest investigation of an incident
-  LOCK#<incident>      one-running-per-incident guard, taken with a conditional put
+  INV#<id>             the investigation as JSON in `body` (+ `owner`, `incident_id`, `status`)
+  LATEST#<owner>#<incident>   pointer to that owner's newest investigation of an incident
+  LOCK#<owner>#<incident>     that owner's one-running-per-incident guard, taken with a conditional put
+
+`<owner>` is a Cognito `sub` (a UUID, so it contains no `#`) or "anonymous" when sign-in is off. A record that
+belongs to someone else is reported as not found. Items written before owners existed have no `owner` attribute
+and read as "anonymous"; their pointers and locks used the old key shape and simply age out with the TTL.
 
 `expires_at` is the table's TTL attribute. The lock also carries a short expiry that the conditional
 put honours itself, because TTL deletion can lag by many hours. A container that dies mid-run
@@ -23,6 +27,7 @@ from botocore.exceptions import ClientError
 from app.agent.coordinator import FAILURE_MESSAGES
 from app.agent.models import Failure, Investigation, ProviderInfo
 from app.errors import InvestigationInProgressError, InvestigationNotFoundError
+from app.identity import ANONYMOUS_OWNER
 
 RECORD_TTL_SECONDS = 7 * 24 * 3600
 LOCK_SECONDS = 60  # comfortably above the 29s Lambda timeout
@@ -30,6 +35,11 @@ LOCK_SECONDS = 60  # comfortably above the 29s Lambda timeout
 
 def _is_conditional_failure(exc: ClientError) -> bool:
     return bool(exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException")
+
+
+def _owned_by(owner: str) -> str:
+    """Condition: the item belongs to `owner`. An item with no owner attribute predates sign-in and is anonymous's."""
+    return "(#w = :owner OR attribute_not_exists(#w))" if owner == ANONYMOUS_OWNER else "#w = :owner"
 
 
 class DynamoDbInvestigationStore:
@@ -54,13 +64,13 @@ class DynamoDbInvestigationStore:
 
     # ---- InvestigationStore ----------------------------------------------------------------
 
-    def create(self, incident_id: str, provider: ProviderInfo, started_at: datetime) -> Investigation:
+    def create(self, owner: str, incident_id: str, provider: ProviderInfo, started_at: datetime) -> Investigation:
         now = int(self._now())
         token = uuid.uuid4().hex
-        lock_key = {"pk": f"LOCK#{incident_id}"}
+        lock_key = {"pk": f"LOCK#{owner}#{incident_id}"}
         try:
             self._table.put_item(
-                Item={**lock_key, "owner": token, "expires_at": now + self._lock_seconds},
+                Item={**lock_key, "holder": token, "expires_at": now + self._lock_seconds},
                 ConditionExpression="attribute_not_exists(pk) OR expires_at < :now",
                 ExpressionAttributeValues={":now": now},
             )
@@ -83,50 +93,64 @@ class DynamoDbInvestigationStore:
                 provider=provider,
                 started_at=started_at,
             )
-            self._put(record, condition="attribute_not_exists(pk)")
             self._table.put_item(
-                Item={"pk": f"LATEST#{incident_id}", "investigation_id": record.id, "expires_at": self._expiry()}
+                Item={
+                    "pk": f"INV#{record.id}",
+                    "owner": owner,
+                    "incident_id": incident_id,
+                    "status": record.status,
+                    "body": record.model_dump_json(),
+                    "expires_at": self._expiry(),
+                },
+                ConditionExpression="attribute_not_exists(pk)",
+            )
+            self._table.put_item(
+                Item={
+                    "pk": f"LATEST#{owner}#{incident_id}",
+                    "investigation_id": record.id,
+                    "expires_at": self._expiry(),
+                }
             )
             self._table.update_item(
                 Key=lock_key,
                 UpdateExpression="SET investigation_id = :id",
-                ConditionExpression="#o = :token",
-                ExpressionAttributeNames={"#o": "owner"},
+                ConditionExpression="holder = :token",
                 ExpressionAttributeValues={":id": record.id, ":token": token},
             )
         except Exception:
-            self._release(incident_id, owner=token)
+            self._release(owner, incident_id, holder=token)
             raise
         return record
 
-    def save(self, investigation: Investigation) -> None:
+    def save(self, owner: str, investigation: Investigation) -> None:
         try:
-            self._put(investigation, condition="attribute_exists(pk)")
+            # An update, not a put: the stored item keeps its owner, and only the owner's own record matches.
+            self._update(investigation, condition=f"attribute_exists(pk) AND {_owned_by(owner)}", owner=owner)
         except ClientError as exc:
             if _is_conditional_failure(exc):
-                return  # unknown id: ignored, like the in-memory store
+                return  # unknown id, or someone else's: ignored, like the in-memory store
             raise
         if investigation.status != "running":
-            self._release(investigation.incident_id, investigation_id=investigation.id)
+            self._release(owner, investigation.incident_id, investigation_id=investigation.id)
 
-    def get(self, investigation_id: str) -> Investigation:
+    def get(self, owner: str, investigation_id: str) -> Investigation:
         item = self._table.get_item(Key={"pk": f"INV#{investigation_id}"}, ConsistentRead=True).get("Item")
-        if item is None:
+        if item is None or item.get("owner", ANONYMOUS_OWNER) != owner:
             raise InvestigationNotFoundError("Investigation not found.")
-        return self._expire_if_orphaned(Investigation.model_validate_json(item["body"]))
+        return self._expire_if_orphaned(owner, Investigation.model_validate_json(item["body"]))
 
-    def latest_for(self, incident_id: str) -> Investigation | None:
-        pointer = self._table.get_item(Key={"pk": f"LATEST#{incident_id}"}, ConsistentRead=True).get("Item")
+    def latest_for(self, owner: str, incident_id: str) -> Investigation | None:
+        pointer = self._table.get_item(Key={"pk": f"LATEST#{owner}#{incident_id}"}, ConsistentRead=True).get("Item")
         if pointer is None:
             return None
         try:
-            return self.get(str(pointer["investigation_id"]))
+            return self.get(owner, str(pointer["investigation_id"]))
         except InvestigationNotFoundError:
             return None  # the record aged out via TTL before its pointer did
 
-    def list_for_incident(self, incident_id: str) -> list[Investigation]:
+    def list_for_incident(self, owner: str, incident_id: str) -> list[Investigation]:
         # The single-table design has no per-incident index, so the timeline shows the newest run only.
-        latest = self.latest_for(incident_id)
+        latest = self.latest_for(owner, incident_id)
         return [latest] if latest else []
 
     # ---- internals -------------------------------------------------------------------------
@@ -134,34 +158,47 @@ class DynamoDbInvestigationStore:
     def _expiry(self) -> int:
         return int(self._now()) + self._record_ttl
 
-    def _put(self, investigation: Investigation, *, condition: str, **condition_args: Any) -> None:
-        self._table.put_item(
-            Item={
-                "pk": f"INV#{investigation.id}",
-                "incident_id": investigation.incident_id,
-                "status": investigation.status,
-                "body": investigation.model_dump_json(),
-                "expires_at": self._expiry(),
-            },
+    def _update(
+        self,
+        investigation: Investigation,
+        *,
+        condition: str,
+        owner: str,
+        values: dict[str, Any] | None = None,
+    ) -> None:
+        """Rewrite the record's mutable fields in place when `condition` holds (`#w` names the owner attribute)."""
+        self._table.update_item(
+            Key={"pk": f"INV#{investigation.id}"},
+            UpdateExpression="SET #s = :status, body = :body, expires_at = :exp",
             ConditionExpression=condition,
-            **condition_args,
+            ExpressionAttributeNames={"#s": "status", "#w": "owner"},
+            ExpressionAttributeValues={
+                ":status": investigation.status,
+                ":body": investigation.model_dump_json(),
+                ":exp": self._expiry(),
+                ":owner": owner,
+                **(values or {}),
+            },
         )
 
-    def _release(self, incident_id: str, *, owner: str | None = None, investigation_id: str | None = None) -> None:
+    def _release(
+        self, owner: str, incident_id: str, *, holder: str | None = None, investigation_id: str | None = None
+    ) -> None:
         """Release the lock only if it is still ours. Best effort: a lock that is not released simply expires."""
-        if owner is not None:  # still holding the pre-id token (create() failed part-way)
-            condition, names, values = "#o = :v", {"#o": "owner"}, {":v": owner}
+        if holder is not None:  # still holding the pre-id token (create() failed part-way)
+            condition, value = "holder = :v", holder
         else:
-            condition, names, values = "investigation_id = :v", None, {":v": str(investigation_id)}
-        args: dict[str, Any] = {"ConditionExpression": condition, "ExpressionAttributeValues": values}
-        if names:
-            args["ExpressionAttributeNames"] = names
+            condition, value = "investigation_id = :v", str(investigation_id)
         try:
-            self._table.delete_item(Key={"pk": f"LOCK#{incident_id}"}, **args)
+            self._table.delete_item(
+                Key={"pk": f"LOCK#{owner}#{incident_id}"},
+                ConditionExpression=condition,
+                ExpressionAttributeValues={":v": value},
+            )
         except ClientError:
             pass
 
-    def _expire_if_orphaned(self, record: Investigation) -> Investigation:
+    def _expire_if_orphaned(self, owner: str, record: Investigation) -> Investigation:
         if record.status != "running" or self._now() - record.started_at.timestamp() <= self._lock_seconds:
             return record
         failed = record.model_copy(
@@ -172,14 +209,11 @@ class DynamoDbInvestigationStore:
             }
         )
         try:  # only if nobody finished it in the meantime
-            self._put(
-                failed,
-                condition="#s = :running",
-                ExpressionAttributeNames={"#s": "status"},
-                ExpressionAttributeValues={":running": "running"},
+            self._update(
+                failed, condition=f"#s = :running AND {_owned_by(owner)}", owner=owner, values={":running": "running"}
             )
         except ClientError as exc:
             if not _is_conditional_failure(exc):
                 raise
-            return self.get(failed.id)
+            return self.get(owner, failed.id)
         return failed

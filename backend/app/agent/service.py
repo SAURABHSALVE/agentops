@@ -1,5 +1,11 @@
-"""Wires the simulator, a provider and the store together for the API."""
+"""Wires the simulator, a provider and the store together for the API.
 
+The service holds the shared parts (simulator, provider, limits). `scoped(owner)` returns a view of it for one
+owner (a signed-in user, or the shared anonymous owner when sign-in is off): every record it reads or writes,
+and every remediation it applies, belongs to that owner and to nobody else.
+"""
+
+import copy
 import logging
 import threading
 from collections.abc import Callable
@@ -13,6 +19,7 @@ from app.agent.timeline import effective_status, events_for
 from app.agent.tools import ToolRunner
 from app.config import Settings
 from app.errors import AgentOpsError, FeedbackNotAllowedError, InvestigationNotFoundError, RemediationStateError
+from app.identity import ANONYMOUS_OWNER
 from app.schemas import GetIncidentArgs, IncidentDetail, IncidentSummary, TimelineEvent
 from app.simulator.service import Simulator
 
@@ -36,6 +43,7 @@ class InvestigationService:
         self._store = store
         self._provider = provider
         self._clock = clock
+        self._owner = ANONYMOUS_OWNER
         self._approval_lock = threading.Lock()  # approvals are rare; serialising them makes "runs once" simple
         runner = ToolRunner(
             simulator,
@@ -53,21 +61,30 @@ class InvestigationService:
     def provider_info(self) -> ProviderInfo:
         return self._provider.info
 
+    def scoped(self, owner: str) -> "InvestigationService":
+        """The same service, acting for `owner`. Cheap: it shares the simulator, provider, store and lock."""
+        view = copy.copy(self)
+        view._owner = owner  # noqa: SLF001 - a copy of this very class
+        return view
+
+    def _save(self, investigation: Investigation) -> None:
+        self._store.save(self._owner, investigation)
+
     def start(self, incident_id: str) -> Investigation:
         """Validate the incident and record a running investigation. Cheap; the work is in run()."""
         self._sim.get_incident(GetIncidentArgs(incident_id=incident_id))
-        return self._store.create(incident_id, self._provider.info, self._clock())
+        return self._store.create(self._owner, incident_id, self._provider.info, self._clock())
 
     def run(self, investigation_id: str) -> None:
         """Execute a started investigation to a terminal state. Never raises, never leaves it 'running'."""
-        initial = self._store.get(investigation_id)
+        initial = self._store.get(self._owner, investigation_id)
         try:
             service = self._sim.get_incident(GetIncidentArgs(incident_id=initial.incident_id)).service
-            self._store.save(self._coordinator.run(initial, service, self._store.save))
+            self._save(self._coordinator.run(initial, service, self._save))
         except Exception as exc:
             logger.error("investigation %s crashed: %s", investigation_id, type(exc).__name__)
-            latest = self._store.get(investigation_id)
-            self._store.save(
+            latest = self._store.get(self._owner, investigation_id)
+            self._save(
                 latest.model_copy(
                     update={
                         "status": "failed",
@@ -78,11 +95,11 @@ class InvestigationService:
             )
 
     def get(self, investigation_id: str) -> Investigation:
-        return self._store.get(investigation_id)
+        return self._store.get(self._owner, investigation_id)
 
     def latest(self, incident_id: str) -> Investigation:
         self._sim.get_incident(GetIncidentArgs(incident_id=incident_id))
-        found = self._store.latest_for(incident_id)
+        found = self._store.latest_for(self._owner, incident_id)
         if found is None:
             raise InvestigationNotFoundError("No investigation has been run for this incident.")
         return found
@@ -91,16 +108,16 @@ class InvestigationService:
 
     def with_status(self, incident: IncidentSummary) -> IncidentSummary:
         """The incident with its status reflecting the newest investigation (investigating / resolved)."""
-        status = effective_status(incident.status, self._store.latest_for(incident.id))
+        status = effective_status(incident.status, self._store.latest_for(self._owner, incident.id))
         return incident.model_copy(update={"status": status}) if status != incident.status else incident
 
     def with_status_detail(self, incident: IncidentDetail) -> IncidentDetail:
-        status = effective_status(incident.status, self._store.latest_for(incident.id))
+        status = effective_status(incident.status, self._store.latest_for(self._owner, incident.id))
         return incident.model_copy(update={"status": status}) if status != incident.status else incident
 
     def timeline(self, incident_id: str) -> list[TimelineEvent]:
         incident = self._sim.get_incident(GetIncidentArgs(incident_id=incident_id))
-        derived = [e for inv in self._store.list_for_incident(incident_id) for e in events_for(inv)]
+        derived = [e for inv in self._store.list_for_incident(self._owner, incident_id) for e in events_for(inv)]
         # Stable sort: the fixture history first at equal timestamps, then investigation order.
         return sorted([*incident.history, *derived], key=lambda e: e.at)
 
@@ -118,7 +135,7 @@ class InvestigationService:
                 if record.status == "rejected":
                     raise RemediationStateError("This remediation was rejected and cannot be approved.")
                 return inv  # duplicate approval: already executing or finished
-            latest = self._store.latest_for(inv.incident_id)
+            latest = self._store.latest_for(self._owner, inv.incident_id)
             if latest is not None and latest.id != inv.id:
                 raise RemediationStateError("A newer investigation exists; approve from the latest one.")
 
@@ -127,10 +144,10 @@ class InvestigationService:
             assert running is not None  # noqa: S101  (just set)
             record = running
             try:
-                action = self._sim.execute_remediation(inv.incident_id, record.action_id)
+                action = self._sim.execute_remediation(inv.incident_id, record.action_id, self._owner)
                 executed_at = self._clock()
                 record = record.model_copy(update={"action": action, "executed_at": executed_at})
-                verification = self._sim.verify_resolution(inv.incident_id)
+                verification = self._sim.verify_resolution(inv.incident_id, self._owner)
                 record = record.model_copy(
                     update={"verification": verification, "verified_at": self._clock(), "status": verification.status}
                 )
@@ -162,7 +179,7 @@ class InvestigationService:
     def give_feedback(self, investigation_id: str, request: FeedbackRequest) -> Investigation:
         """Record whether a finished answer helped. Replaces an earlier verdict; never reaches a model."""
         with self._approval_lock:  # same lock as approvals: both rewrite the whole record
-            inv = self._store.get(investigation_id)
+            inv = self._store.get(self._owner, investigation_id)
             if inv.status == "running":
                 raise FeedbackNotAllowedError("This investigation is still running; rate it when it finishes.")
             updated = inv.model_copy(
@@ -170,16 +187,16 @@ class InvestigationService:
                     "feedback": Feedback(helpful=request.helpful, comment=request.comment or None, at=self._clock())
                 }
             )
-            self._store.save(updated)
+            self._save(updated)
             return updated
 
     def _decidable(self, investigation_id: str) -> tuple[Investigation, RemediationRecord]:
-        inv = self._store.get(investigation_id)
+        inv = self._store.get(self._owner, investigation_id)
         if inv.status != "completed" or inv.remediation_state is None or inv.findings is None:
             raise RemediationStateError("This investigation has no remediation awaiting a decision.")
         return inv, inv.remediation_state
 
     def _save_state(self, inv: Investigation, record: RemediationRecord) -> Investigation:
         updated = inv.model_copy(update={"remediation_state": record})
-        self._store.save(updated)
+        self._save(updated)
         return updated

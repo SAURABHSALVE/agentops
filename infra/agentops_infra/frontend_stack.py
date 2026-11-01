@@ -6,11 +6,14 @@ from typing import Any
 from aws_cdk import Annotations, CfnOutput, Duration, RemovalPolicy, Stack, Tags
 from aws_cdk import aws_cloudfront as cloudfront
 from aws_cdk import aws_cloudfront_origins as origins
+from aws_cdk import aws_cognito as cognito
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_s3_deployment as s3deploy
 from constructs import Construct
 
+from agentops_infra.auth_stack import AuthStack
 from agentops_infra.backend_stack import BackendStack
+from agentops_infra.config import StageConfig
 
 # Next's static export writes /incidents/INC-1001/index.html; S3 has no notion of a directory index.
 _REWRITE = """\
@@ -36,7 +39,9 @@ class FrontendStack(Stack):
         scope: Construct,
         construct_id: str,
         *,
+        cfg: StageConfig,
         backend: BackendStack,
+        auth: AuthStack | None = None,
         site_dir: Path,
         placeholder_dir: Path,
         **kwargs: Any,
@@ -121,10 +126,13 @@ class FrontendStack(Stack):
                 "agentops:missing-site-build",
                 f"{site_dir} is missing: deploying a placeholder page. Run `npm run build` in frontend/ first.",
             )
+        sources = [s3deploy.Source.asset(str(site_dir if site_dir.is_dir() else placeholder_dir))]
+        if auth is not None:
+            sources.append(self._sign_in(cfg, auth))
         s3deploy.BucketDeployment(
             self,
             "DeploySite",
-            sources=[s3deploy.Source.asset(str(site_dir if site_dir.is_dir() else placeholder_dir))],
+            sources=sources,
             destination_bucket=self.bucket,
             distribution=self.distribution,
             distribution_paths=["/*"],
@@ -136,3 +144,42 @@ class FrontendStack(Stack):
         Tags.of(self).add("Component", "frontend")
         CfnOutput(self, "SiteUrl", value=f"https://{self.distribution.distribution_domain_name}")
         CfnOutput(self, "DistributionId", value=self.distribution.distribution_id)
+
+    def _sign_in(self, cfg: StageConfig, auth: AuthStack) -> s3deploy.ISource:
+        """The app client for the browser, and `auth-config.json`, which tells the site how to reach it.
+
+        The client lives here because its callback is this distribution's address, which exists only now. The
+        address and ids are filled in at deploy time, so the static build needs no knowledge of them.
+        """
+        site = f"https://{self.distribution.distribution_domain_name}"
+        local = [] if cfg.is_prod else ["http://localhost:3000"]  # a local site may sign in to a dev pool
+        client = cognito.UserPoolClient(
+            self,
+            "WebClient",
+            user_pool=auth.pool,
+            user_pool_client_name=f"{cfg.prefix}-web",
+            generate_secret=False,  # a browser cannot keep a secret; PKCE protects the code instead
+            auth_flows=cognito.AuthFlow(user_srp=True),  # what the hosted page uses; no plain-password or custom flows
+            o_auth=cognito.OAuthSettings(
+                flows=cognito.OAuthFlows(authorization_code_grant=True),
+                scopes=[cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL],
+                callback_urls=[f"{site}/auth/callback", *(f"{u}/auth/callback" for u in local)],
+                logout_urls=[f"{site}/", *(f"{u}/" for u in local)],
+            ),
+            supported_identity_providers=[cognito.UserPoolClientIdentityProvider.COGNITO],
+            prevent_user_existence_errors=True,
+            enable_token_revocation=True,
+            access_token_validity=Duration.hours(1),
+            id_token_validity=Duration.hours(1),
+            refresh_token_validity=Duration.days(1),  # the site never uses refresh tokens; expiry means sign in again
+        )
+        CfnOutput(self, "UserPoolClientId", value=client.user_pool_client_id)
+        return s3deploy.Source.json_data(
+            "auth-config.json",
+            {
+                "region": auth.region,
+                "userPoolId": auth.pool.user_pool_id,
+                "clientId": client.user_pool_client_id,
+                "hostedUiUrl": auth.hosted_ui_url,
+            },
+        )

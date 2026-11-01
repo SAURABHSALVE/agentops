@@ -15,9 +15,12 @@ result and keeps an audit timeline. The model provider is a deterministic mock b
 >   access code when a deployment needs one. `scripts/e2e-ui.mjs` clicks through the real UI against the real API.
 > - **Evaluation:** the seven required cases are an offline test suite; mock and live-model results are measured and
 >   reported with their weaknesses in [docs/EVALUATION.md](docs/EVALUATION.md).
-> - **Verified on the live site:** the home page and deep links load, an investigation runs, approval and verification
->   work, and state persists in DynamoDB. **Not enabled live:** the OpenAI provider (needs `-c agentProvider=openai`,
->   secrets and an OpenAI spend limit) and a login system (writes are open or behind one shared access code).
+> - **Verified on the live site (before sign-in):** the home page and deep links load, an investigation runs, approval and
+>   verification work, and state persists in DynamoDB. **Not enabled live:** the OpenAI provider (needs
+>   `-c agentProvider=openai`, secrets and an OpenAI spend limit).
+> - **Sign-in (Phase 12):** Amazon Cognito login, with each person's investigations, approvals and feedback private to
+>   their account. Built and tested locally, in CI-equivalent checks and in a real browser against a fake Cognito; it
+>   reaches the live site when this change is merged and deployed. See "Sign-in" below.
 > - **Product polish (Phases 9 to 10 and parts of 11 and 14):** a plain-English home page and answer card, a
 >   "was this useful?" feedback route, secret and personal-data redaction on telemetry text, a request body cap and
 >   request ids. See [docs/RUNBOOK.md](docs/RUNBOOK.md) for operating it.
@@ -73,6 +76,7 @@ Everything the user sees is simulated demo telemetry, labelled as such.
 | Stack | Contents | Why separate |
 |---|---|---|
 | `AgentOps-<stage>-Data` | DynamoDB table, Secrets Manager slot | Stateful. In prod: retained, point-in-time recovery, deletion and termination protection |
+| `AgentOps-<stage>-Auth` | Cognito user pool and hosted sign-in page | Accounts are data: in prod, retained, deletion and termination protection. Skipped with `-c auth=none` |
 | `AgentOps-<stage>-Backend` | Lambda, HTTP API, log group | Replaceable on every deploy |
 | `AgentOps-<stage>-Frontend` | S3, CloudFront, site deployment | Build output, always reproducible |
 | `AgentOps-<stage>-Monitoring` | Alarms, SNS topic, budget | Notifications and cost guardrail |
@@ -191,8 +195,9 @@ no prompts or model output in logs, security headers, API throttling, alarms, a 
 **Not done, and why:**
 - **Deployed with the mock provider on simulated data.** The first deploy (2026-11-01) verified the live site, the GitHub
   OIDC role assumption and the deploy pipeline. For the live model, redeploy with `-c agentProvider=openai`, store the
-  key in Secrets Manager and set an OpenAI project spend limit first. **Writes on the public site are open** unless an
-  access code is configured; treat it as a demo, not a multi-user product (no per-user login yet).
+  key in Secrets Manager and set an OpenAI project spend limit first. **Until the Auth stack is deployed, writes on the
+  public site are open** unless an access code is configured. Once it is, every write needs a signed-in user, and
+  sign-up is open to anyone with an email address (see "Sign-in" for what that does and does not protect).
 - A live investigation must finish inside API Gateway's 30 s limit; typical runs take 6 to 11 s and the model call times
   out at 12 s, but a slow provider day can fail a run (it ends `failed`, never with a made-up answer).
 - The per-process rate limit is a backstop, not a global cap; the API throttle and an OpenAI project spend limit are the
@@ -312,3 +317,37 @@ OpenAI key** if it was ever pasted anywhere shared. No cloud resources exist unl
 
 ## Docs
 [docs/EVALUATION.md](docs/EVALUATION.md) · [docs/DEMO.md](docs/DEMO.md) · [docs/REAL_TELEMETRY.md](docs/REAL_TELEMETRY.md) · [PLAN.md](PLAN.md) · [DECISIONS.md](DECISIONS.md) · [SECURITY.md](SECURITY.md) · build spec: `AgentOps_AI_Claude_Code_Build_Plan.md`
+
+## Sign-in
+
+Anyone can **read** the incidents. To run an investigation, approve an action or leave feedback you sign in (Amazon
+Cognito's hosted page, email and password, optional authenticator-app MFA). What you run is **private to your account**:
+another user's investigations, approvals, feedback and timeline are invisible to you and unaffected by yours, and an
+approval by one user does not "resolve" the incident for another.
+
+How it works (decisions D-036 and D-037):
+- The browser signs in with the authorization code + PKCE flow (no SDK, no client secret) and sends the Cognito **access
+  token** as `Authorization: Bearer ...`. It is kept in the tab's `sessionStorage`: gone when the tab closes, one hour
+  at most.
+- **The backend decides.** `backend/app/auth.py` verifies the token (RS256, the pool's published keys, `iss`, `exp`,
+  `token_use=access`, a UUID `sub`) with PyJWT. The user id comes only from that verified token; nothing the client can
+  set by header, query or body names an owner. A present-but-bad token is refused, not treated as anonymous.
+- Records, running-investigation locks and applied remediations are keyed by that id in all three stores (memory, SQLite,
+  DynamoDB). Someone else's id reads as "not found".
+- **Off by default locally:** with no `COGNITO_USER_POOL_ID` everything works as before and every caller is one shared
+  `anonymous` owner. In AWS, sign-in is on by default; `-c auth=none` deploys the open demo.
+
+Backend settings: `COGNITO_USER_POOL_ID` (e.g. `us-east-1_AbCdEf123`), and `COGNITO_ISSUER` (a test seam for a local fake
+issuer; https, or http on loopback only). The deployed site learns the app client from `/auth-config.json`, which CDK
+writes at deploy time; to develop against a real dev pool, put the same four fields in `frontend/public/auth-config.json`
+(git-ignored): `region`, `userPoolId`, `clientId`, `hostedUiUrl`.
+
+Check it in a real browser with no AWS: `npm run build` in `frontend/`, then `AUTH=1 node scripts/e2e-ui.mjs`. It starts a
+fake Cognito, the real backend and the production build on one origin, and checks sign-in, privacy between two users,
+sign-out, a forged token and refused callbacks.
+
+**Honest limits:** sign-up is open, so anyone with an email can create an account (Cognito's own email sender allows about
+50 verification emails a day, which is also a natural brake). There is no admin UI, no password-reset page of our own (the
+hosted page has one), and the per-process rate limiter is still shared, not per user. The token sits in `sessionStorage`,
+which script on the page could read; there is no Content-Security-Policy yet. The hosted page is Cognito's classic one,
+not the newer managed-login branding. It has only been exercised against a fake Cognito until it is deployed.

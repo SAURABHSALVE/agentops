@@ -11,6 +11,7 @@ from app.agent.models import ProviderInfo
 from app.agent.store import MAX_RECORDS, InMemoryInvestigationStore
 from app.config import ConfigError, Settings
 from app.errors import InvestigationInProgressError, InvestigationNotFoundError
+from app.identity import ANONYMOUS_OWNER as OWNER
 from app.main import create_app
 from app.simulator.service import Simulator
 from tests.scripted_provider import ScriptedProvider, final
@@ -139,32 +140,32 @@ def test_scripted_provider_is_test_only() -> None:
 
 def test_store_allows_one_running_investigation_per_incident() -> None:
     store = InMemoryInvestigationStore()
-    first = store.create("INC-1001", INFO, NOW)
+    first = store.create(OWNER, "INC-1001", INFO, NOW)
     with pytest.raises(InvestigationInProgressError):
-        store.create("INC-1001", INFO, NOW)
-    store.create("INC-1002", INFO, NOW)
-    store.save(first.model_copy(update={"status": "completed"}))
-    assert store.create("INC-1001", INFO, NOW).id == "inv-0003"
+        store.create(OWNER, "INC-1001", INFO, NOW)
+    store.create(OWNER, "INC-1002", INFO, NOW)
+    store.save(OWNER, first.model_copy(update={"status": "completed"}))
+    assert store.create(OWNER, "INC-1001", INFO, NOW).id == "inv-0003"
 
 
 def test_store_unknown_id_and_save_of_unknown_record() -> None:
     store = InMemoryInvestigationStore()
     with pytest.raises(InvestigationNotFoundError):
-        store.get("inv-0001")
-    ghost = InMemoryInvestigationStore().create("INC-1001", INFO, NOW)
-    store.save(ghost)  # saving a record the store never created must not resurrect it
+        store.get(OWNER, "inv-0001")
+    ghost = InMemoryInvestigationStore().create(OWNER, "INC-1001", INFO, NOW)
+    store.save(OWNER, ghost)  # saving a record the store never created must not resurrect it
     with pytest.raises(InvestigationNotFoundError):
-        store.get(ghost.id)
+        store.get(OWNER, ghost.id)
 
 
 def test_store_memory_is_bounded_and_never_evicts_a_running_record() -> None:
     store = InMemoryInvestigationStore()
-    running = store.create("INC-0001", INFO, NOW)
+    running = store.create(OWNER, "INC-0001", INFO, NOW)
     for n in range(MAX_RECORDS + 20):
-        rec = store.create(f"INC-{n + 2:04d}", INFO, NOW)
-        store.save(rec.model_copy(update={"status": "completed"}))
+        rec = store.create(OWNER, f"INC-{n + 2:04d}", INFO, NOW)
+        store.save(OWNER, rec.model_copy(update={"status": "completed"}))
     assert len(store._rows) <= MAX_RECORDS  # noqa: SLF001
-    assert store.get(running.id).status == "running"
+    assert store.get(OWNER, running.id).status == "running"
 
 
 # ---- configuration ----------------------------------------------------------------------------

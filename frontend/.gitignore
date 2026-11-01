@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local sign-in settings for developing against a real Cognito pool (deployed sites get theirs from CDK)
+/public/auth-config.json

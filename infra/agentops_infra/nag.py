@@ -4,6 +4,7 @@ anything not listed here fails the build."""
 from aws_cdk import Acknowledgment, Token, Validations
 from constructs import IConstruct
 
+from agentops_infra.auth_stack import AuthStack
 from agentops_infra.backend_stack import BackendStack
 from agentops_infra.config import StageConfig
 from agentops_infra.data_stack import DataStack
@@ -42,6 +43,21 @@ def acknowledge_data(stack: DataStack, cfg: StageConfig) -> None:
         )
 
 
+def acknowledge_auth(stack: AuthStack) -> None:
+    _ack(
+        stack.pool,
+        "AwsSolutions-COG2",
+        "MFA is optional (authenticator app, no SMS cost). Forcing it would stop a visitor trying the demo; the "
+        "accounts hold no data beyond an email address and simulated investigations.",
+    )
+    _ack(
+        stack.pool,
+        "AwsSolutions-COG8",
+        "The Plus plan (threat protection) is billed per user; the demo relies on long passwords, optional MFA, "
+        "Cognito's built-in sign-in throttling and API Gateway throttling instead.",
+    )
+
+
 def acknowledge_backend(stack: BackendStack) -> None:
     _ack(
         stack.function,
@@ -54,7 +70,10 @@ def acknowledge_backend(stack: BackendStack) -> None:
         "Python 3.13 is pinned on purpose: it is the version CI tests and the bundle is built for.",
     )
     _ack(
-        stack.api, "AwsSolutions-APIG4", "Public demo over simulated data, protected by throttling, not authorisation."
+        stack.api,
+        "AwsSolutions-APIG4",
+        "The gateway lets every route through on purpose: reads are public simulated data. The Lambda verifies the "
+        "Cognito token itself, because an API Gateway JWT authorizer cannot make sign-in optional per request.",
     )
     _ack(stack, "AwsSolutions-APIG1", "Access logging is off to avoid log cost; Lambda logs and alarms cover the demo.")
 

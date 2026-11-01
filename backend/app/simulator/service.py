@@ -12,6 +12,7 @@ from app.errors import (
     RemediationNotApplicableError,
     UnknownRemediationError,
 )
+from app.identity import ANONYMOUS_OWNER
 from app.redaction import redact
 from app.repository import IncidentRepository
 from app.schemas import (
@@ -110,7 +111,7 @@ class Simulator:
 
     # ---- simulated remediation and verification ----------------------------------------------
 
-    def execute_remediation(self, incident_id: str, action_id: str) -> ActionResult:
+    def execute_remediation(self, incident_id: str, action_id: str, owner: str = ANONYMOUS_OWNER) -> ActionResult:
         """Run an allowlisted *simulated* action.
 
         Not reachable over HTTP in Phase 2: the human-approval gate is built in Phase 5, and the
@@ -124,7 +125,7 @@ class Simulator:
             raise RemediationNotApplicableError(
                 f"Action '{spec.action_id}' does not apply to service '{incident.service}'."
             )
-        newly_applied = self._repo.record_remediation(incident.id, spec.action_id)
+        newly_applied = self._repo.record_remediation(incident.id, spec.action_id, owner)
         return ActionResult(
             incident_id=incident.id,
             action_id=spec.action_id,
@@ -132,11 +133,11 @@ class Simulator:
             summary=spec.description if newly_applied else "Action was already applied; nothing re-run.",
         )
 
-    def verify_resolution(self, incident_id: str) -> VerificationResult:
+    def verify_resolution(self, incident_id: str, owner: str = ANONYMOUS_OWNER) -> VerificationResult:
         """Check simulated metrics against thresholds. This is separate from action success:
         an action can succeed while verification still fails."""
         incident = self._repo.get_incident(incident_id)
-        applied = self._repo.get_applied_remediation(incident.id) is not None
+        applied = self._repo.get_applied_remediation(incident.id, owner) is not None
         checks = self._source.verification(incident, applied)
         if not checks:
             return VerificationResult(incident_id=incident.id, status="not_verifiable", checks=[])

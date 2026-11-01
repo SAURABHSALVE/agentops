@@ -56,6 +56,24 @@ class UnauthorizedError(AgentOpsError):
     code = "unauthorized"
 
 
+class SignInRequiredError(AgentOpsError):
+    """Sign-in is configured and this action needs a signed-in user."""
+
+    code = "sign_in_required"
+
+
+class InvalidTokenError(AgentOpsError):
+    """A bearer token was presented but is not acceptable (expired, forged, wrong pool, wrong kind)."""
+
+    code = "invalid_token"
+
+
+class AuthUnavailableError(AgentOpsError):
+    """The signing keys could not be fetched, so no token can be checked right now. Safe to retry."""
+
+    code = "auth_unavailable"
+
+
 class RateLimitedError(AgentOpsError):
     code = "rate_limited"
 

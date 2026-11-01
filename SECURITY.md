@@ -54,6 +54,12 @@ Portfolio MVP, not a production system. All data is synthetic by default. Revise
 **Implemented (D-028):** an access code on every write, per-process rate limits, a token budget per investigation, and secrets
 read from Secrets Manager. **Still your job before exposing a key:** set a spend limit on the OpenAI project and budget alerts.
 
+**Sign-in (D-036):** with a Cognito user pool configured, writes need a signed-in user and every record belongs to one.
+Tokens are verified in the backend, never trusted from the browser; the owner id comes only from the verified `sub`. Access
+tokens are kept in `sessionStorage` (readable by script on the page, so there is no stronger secret than "can run
+investigations as you"); a Content-Security-Policy is not set yet. Self sign-up is open by design, so sign-in limits what a
+stranger can do to your *data*, not who can create an account.
+
 A deployed backend that holds a billable key is an abuse target. Before exposing it: access control and rate limiting on the
 investigate endpoint, a spend limit on the OpenAI project, a token budget per investigation, and budget alerts. Otherwise
 demo locally. The OpenAI key lives in a managed secret store (decided in Phase 6), never in the image, repo or frontend.

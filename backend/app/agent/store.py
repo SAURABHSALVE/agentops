@@ -1,5 +1,8 @@
 """Investigation records. In memory for Phase 3A (lost on restart); Phase 4 replaces it with SQLite
-behind this same interface."""
+behind this same interface.
+
+Every method takes the owner first and only ever sees that owner's records: asking for another owner's
+investigation id is the same as asking for one that does not exist."""
 
 import threading
 from datetime import datetime
@@ -12,32 +15,36 @@ MAX_RECORDS = 200  # bound memory: evict the oldest finished investigation beyon
 
 
 class InvestigationStore(Protocol):
-    def create(self, incident_id: str, provider: ProviderInfo, started_at: datetime) -> Investigation:
-        """Raise InvestigationInProgressError if this incident already has a running investigation."""
+    def create(self, owner: str, incident_id: str, provider: ProviderInfo, started_at: datetime) -> Investigation:
+        """Raise InvestigationInProgressError if this owner already has a running investigation of the incident."""
         ...
 
-    def save(self, investigation: Investigation) -> None: ...
-
-    def get(self, investigation_id: str) -> Investigation:
-        """Raise InvestigationNotFoundError if unknown."""
+    def save(self, owner: str, investigation: Investigation) -> None:
+        """Replace the owner's record. An unknown id, or one that belongs to someone else, is ignored."""
         ...
 
-    def latest_for(self, incident_id: str) -> Investigation | None: ...
+    def get(self, owner: str, investigation_id: str) -> Investigation:
+        """Raise InvestigationNotFoundError if unknown or owned by someone else."""
+        ...
 
-    def list_for_incident(self, incident_id: str) -> list[Investigation]:
+    def latest_for(self, owner: str, incident_id: str) -> Investigation | None: ...
+
+    def list_for_incident(self, owner: str, incident_id: str) -> list[Investigation]:
         """Oldest first. Used to build the audit timeline."""
         ...
 
 
 class InMemoryInvestigationStore:
     def __init__(self) -> None:
-        self._rows: dict[str, Investigation] = {}
+        self._rows: dict[str, tuple[str, Investigation]] = {}  # id -> (owner, record)
         self._counter = 0
         self._lock = threading.Lock()
 
-    def create(self, incident_id: str, provider: ProviderInfo, started_at: datetime) -> Investigation:
+    def create(self, owner: str, incident_id: str, provider: ProviderInfo, started_at: datetime) -> Investigation:
         with self._lock:
-            if any(r.incident_id == incident_id and r.status == "running" for r in self._rows.values()):
+            if any(
+                o == owner and r.incident_id == incident_id and r.status == "running" for o, r in self._rows.values()
+            ):
                 raise InvestigationInProgressError("An investigation is already running for this incident.")
             self._counter += 1
             record = Investigation(
@@ -47,31 +54,31 @@ class InMemoryInvestigationStore:
                 provider=provider,
                 started_at=started_at,
             )
-            self._rows[record.id] = record
+            self._rows[record.id] = (owner, record)
             while len(self._rows) > MAX_RECORDS:
-                oldest_finished = next((k for k, r in self._rows.items() if r.status != "running"), None)
+                oldest_finished = next((k for k, (_, r) in self._rows.items() if r.status != "running"), None)
                 if oldest_finished is None:
                     break
                 del self._rows[oldest_finished]
             return record
 
-    def save(self, investigation: Investigation) -> None:
+    def save(self, owner: str, investigation: Investigation) -> None:
         with self._lock:
-            if investigation.id in self._rows:
-                self._rows[investigation.id] = investigation
+            existing = self._rows.get(investigation.id)
+            if existing is not None and existing[0] == owner:
+                self._rows[investigation.id] = (owner, investigation)
 
-    def get(self, investigation_id: str) -> Investigation:
+    def get(self, owner: str, investigation_id: str) -> Investigation:
         with self._lock:
-            try:
-                return self._rows[investigation_id]
-            except KeyError:
-                raise InvestigationNotFoundError("Investigation not found.") from None
+            found = self._rows.get(investigation_id)
+        if found is None or found[0] != owner:
+            raise InvestigationNotFoundError("Investigation not found.")
+        return found[1]
 
-    def latest_for(self, incident_id: str) -> Investigation | None:
-        with self._lock:
-            matching = [r for r in self._rows.values() if r.incident_id == incident_id]
-            return matching[-1] if matching else None
+    def latest_for(self, owner: str, incident_id: str) -> Investigation | None:
+        matching = self.list_for_incident(owner, incident_id)
+        return matching[-1] if matching else None
 
-    def list_for_incident(self, incident_id: str) -> list[Investigation]:
+    def list_for_incident(self, owner: str, incident_id: str) -> list[Investigation]:
         with self._lock:
-            return [r for r in self._rows.values() if r.incident_id == incident_id]
+            return [r for o, r in self._rows.values() if o == owner and r.incident_id == incident_id]

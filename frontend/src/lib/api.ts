@@ -1,3 +1,4 @@
+import { clearSession, getSession } from "./auth";
 import type { Incident, IncidentSummary, Investigation, TimelineEvent } from "./types";
 
 // Local development talks to the API on :8000. The deployed static site shares an origin with the API
@@ -31,6 +32,8 @@ export function setAccessCode(code: string): void {
 export interface PublicConfig {
   data_mode: "simulated" | "captured";
   write_access: "open" | "code_required";
+  /** Absent on an API older than sign-in. */
+  auth?: { mode: "none" | "cognito" };
   provider: { kind: "mock" | "openai"; label: string };
 }
 
@@ -44,12 +47,14 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
   let res: Response;
+  const token = getSession()?.accessToken;
   try {
     const headers: Record<string, string> = { Accept: "application/json", ...(init?.headers as Record<string, string>) };
     const code = init?.method === "POST" ? getAccessCode() : "";
     if (code) headers["X-Access-Code"] = code;
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") throw e;
@@ -68,6 +73,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (body.error?.code) code = body.error.code;
     } catch {
       /* keep the generic message */
+    }
+    if (res.status === 401 && code === "invalid_token" && token) {
+      // The server no longer accepts this sign-in (expired, or from another deployment). Drop it, and for a read
+      // just ask again as a visitor so the page still loads; an action reports "sign in again".
+      clearSession();
+      if (!retried && (init?.method ?? "GET") === "GET") return request<T>(path, init, true);
     }
     throw new ApiError(message, res.status, code);
   }

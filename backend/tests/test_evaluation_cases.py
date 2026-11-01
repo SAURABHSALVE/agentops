@@ -218,9 +218,9 @@ def test_nothing_runs_without_an_approval_in_any_investigation(sim: Simulator) -
     executed: list[str] = []
     real = sim.execute_remediation
 
-    def spy(incident_id: str, action_id: str) -> Any:
+    def spy(incident_id: str, action_id: str, owner: str = "anonymous") -> Any:
         executed.append(action_id)
-        return real(incident_id, action_id)
+        return real(incident_id, action_id, owner)
 
     sim.execute_remediation = spy  # type: ignore[method-assign]
     client = TestClient(create_app(simulator=sim))

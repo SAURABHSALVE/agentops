@@ -120,7 +120,7 @@ export function useWorkspace(incidentId: string) {
         if (alive.current) setInvestigation(next);
       } catch (e) {
         if (alive.current) {
-          if (e instanceof ApiError && e.status === 401) {
+          if (e instanceof ApiError && e.status === 401 && e.code === "unauthorized") {
             setNeedsCode(true);
             setActionError("An access code is required for this action. Enter it above, then try again.");
           } else setActionError(message(e));
