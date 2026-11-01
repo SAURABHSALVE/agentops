@@ -18,9 +18,11 @@ result and keeps an audit timeline. The model provider is a deterministic mock b
 > - **Verified on the live site (before sign-in):** the home page and deep links load, an investigation runs, approval and
 >   verification work, and state persists in DynamoDB. **Not enabled live:** the OpenAI provider (needs
 >   `-c agentProvider=openai`, secrets and an OpenAI spend limit).
-> - **Sign-in (Phase 12):** Amazon Cognito login, with each person's investigations, approvals and feedback private to
->   their account. Built and tested locally, in CI-equivalent checks and in a real browser against a fake Cognito; it
->   reaches the live site when this change is merged and deployed. See "Sign-in" below.
+> - **Sign-in (Phase 12), deployed 2026-11-02:** Amazon Cognito login, with each person's investigations, approvals and
+>   feedback private to their account. Tested locally and in a real browser against a fake Cognito. Checked on the live
+>   site by the smoke test: writes are refused without sign-in, Cognito's real hosted page accepts this site's client and
+>   callback, and the Lambda reaches Cognito for its signing keys. **Not yet checked live:** a full human sign-up and
+>   sign-in (verification email included). See "Sign-in" below.
 > - **Product polish (Phases 9 to 10 and parts of 11 and 14):** a plain-English home page and answer card, a
 >   "was this useful?" feedback route, secret and personal-data redaction on telemetry text, a request body cap and
 >   request ids. See [docs/RUNBOOK.md](docs/RUNBOOK.md) for operating it.
@@ -350,4 +352,5 @@ sign-out, a forged token and refused callbacks.
 50 verification emails a day, which is also a natural brake). There is no admin UI, no password-reset page of our own (the
 hosted page has one), and the per-process rate limiter is still shared, not per user. The token sits in `sessionStorage`,
 which script on the page could read; there is no Content-Security-Policy yet. The hosted page is Cognito's classic one,
-not the newer managed-login branding. It has only been exercised against a fake Cognito until it is deployed.
+not the newer managed-login branding. A complete sign-up and sign-in with a real email has not been exercised yet;
+the smoke test (`scripts/smoke_test.sh`) cannot sign in from CI, so it checks everything short of that.
