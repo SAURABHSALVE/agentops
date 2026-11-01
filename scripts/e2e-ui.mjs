@@ -178,6 +178,10 @@ try {
       check("a rejected token does not break reading: the page still loads", await waitText("Elevated HTTP 5xx on checkout", 20000));
       check("and the browser drops that sign-in", (await waitText("Sign in to investigate", 20000)) && !(await text()).includes(USERS.bob.email));
 
+      // ---- the production build answers an unknown incident with a plain not-found page -------------
+      await goto("/incidents/INC-9999/");
+      check("an unknown incident is a clean not-found in the built site", await waitText("not found", 15000));
+
       // ---- the callback refuses bad arrivals ----------------------------------------------------
       await goto("/auth/callback?error=access_denied");
       check("cancelling at the hosted page is explained", await waitText("Sign-in was cancelled."));

@@ -63,8 +63,9 @@ export function useAuth(): AuthState & { error: string | null; signIn: (returnTo
   const startSignOut = useCallback(() => void signOut(), []);
 
   let state: AuthState;
-  if (mode === "loading" || configured === null) state = { status: "loading" };
-  else if (mode !== "cognito") state = { status: "off" };
+  if (mode === "loading") state = { status: "loading" };
+  else if (mode !== "cognito") state = { status: "off" }; // nothing else to wait for
+  else if (configured === null) state = { status: "loading" };
   else if (!configured) state = { status: "unavailable" };
   else if (session) state = { status: "signed_in", email: sessionEmail(session) };
   else state = { status: "signed_out" };
