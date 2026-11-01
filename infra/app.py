@@ -14,6 +14,7 @@ import aws_cdk as cdk
 from cdk_nag import AwsSolutionsChecks
 
 from agentops_infra import nag
+from agentops_infra.auth_stack import AuthStack
 from agentops_infra.backend_stack import BackendStack
 from agentops_infra.config import REGION, github_subject_prefix, stage_config
 from agentops_infra.data_stack import DataStack
@@ -42,11 +43,14 @@ if app.node.try_get_context("stage"):
     cfg = stage_config(app)
     name = f"AgentOps-{cfg.stage}"
     data = DataStack(app, f"{name}-Data", cfg=cfg, env=env)
-    backend = BackendStack(app, f"{name}-Backend", cfg=cfg, data=data, backend_dir=ROOT / "backend", env=env)
+    auth = AuthStack(app, f"{name}-Auth", cfg=cfg, env=env) if cfg.sign_in else None
+    backend = BackendStack(app, f"{name}-Backend", cfg=cfg, data=data, auth=auth, backend_dir=ROOT / "backend", env=env)
     frontend = FrontendStack(
         app,
         f"{name}-Frontend",
+        cfg=cfg,
         backend=backend,
+        auth=auth,
         site_dir=ROOT / "frontend" / "out",
         placeholder_dir=HERE / "placeholder_site",
         env=env,
@@ -55,8 +59,12 @@ if app.node.try_get_context("stage"):
     nag.acknowledge_data(data, cfg)
     nag.acknowledge_backend(backend)
     nag.acknowledge_frontend(frontend)
-    stacks += [data, backend, frontend, monitoring]
-    for stack in (data, backend, frontend, monitoring):
+    stage_stacks = [data, backend, frontend, monitoring]
+    if auth is not None:
+        nag.acknowledge_auth(auth)
+        stage_stacks.append(auth)
+    stacks += stage_stacks
+    for stack in stage_stacks:
         cdk.Tags.of(stack).add("Stage", cfg.stage)
 
 for each in stacks:

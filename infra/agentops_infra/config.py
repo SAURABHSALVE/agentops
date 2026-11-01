@@ -17,6 +17,7 @@ _REPO = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 _SUBJECT_PREFIX = re.compile(r"^repo:([A-Za-z0-9-]+)(?:@\d+)?/([A-Za-z0-9._-]+)(?:@\d+)?$")
 _MODEL = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 AGENT_PROVIDERS = ("mock", "openai")
+AUTH_MODES = ("cognito", "none")
 
 
 class ConfigError(ValueError):
@@ -32,6 +33,13 @@ class StageConfig:
     # access code and the two secrets the Lambda may read. Opt in with: -c agentProvider=openai
     agent_provider: str = "mock"
     openai_model: str = "gpt-4.1-mini"
+    # "cognito" (default) adds the sign-in user pool: writes need a signed-in user and records are per user.
+    # "none" deploys the open demo as it was before sign-in. Choose with: -c auth=none
+    auth: str = "cognito"
+
+    @property
+    def sign_in(self) -> bool:
+        return self.auth == "cognito"
 
     @property
     def live(self) -> bool:
@@ -71,7 +79,11 @@ def stage_config(scope: Construct) -> StageConfig:
     model = _context(scope, "openaiModel") or "gpt-4.1-mini"
     if not _MODEL.match(model):
         raise ConfigError("openaiModel is not a valid model name.")
+    auth = _context(scope, "auth") or "cognito"
+    if auth not in AUTH_MODES:
+        raise ConfigError("auth must be 'cognito' or 'none'.")
     return StageConfig(
+        auth=auth,
         stage=stage,
         alert_email=email,
         budget_limit_usd=int(raw_limit),

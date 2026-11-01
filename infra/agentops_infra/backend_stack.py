@@ -11,6 +11,7 @@ from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from constructs import Construct
 
+from agentops_infra.auth_stack import AuthStack
 from agentops_infra.config import StageConfig
 from agentops_infra.data_stack import DataStack
 from agentops_infra.lambda_bundling import ARCHITECTURE, RUNTIME, backend_code
@@ -18,13 +19,13 @@ from agentops_infra.lambda_bundling import ARCHITECTURE, RUNTIME, backend_code
 # Sized for the mock provider, which answers in milliseconds. API Gateway cuts a request off at 30s, so the
 # function must finish first. Live OpenAI calls (Phase 3B) need an asynchronous design; see DECISIONS.md D-023.
 LAMBDA_TIMEOUT = Duration.seconds(29)
-# Public endpoint with no auth: cap what a stranger can do to the bill. Requests per second, per stage.
+# Reads are open and writes need sign-in, but still cap what a stranger can do to the bill. Requests/second, per stage.
 THROTTLE_RATE, THROTTLE_BURST = 10, 20
 
 
 class BackendStack(Stack):
     @staticmethod
-    def _environment(cfg: StageConfig, data: DataStack) -> dict[str, str]:
+    def _environment(cfg: StageConfig, data: DataStack, auth: AuthStack | None) -> dict[str, str]:
         env = {
             "STORAGE_MODE": "dynamodb",
             "DYNAMODB_TABLE": data.table.table_name,
@@ -45,6 +46,9 @@ class BackendStack(Stack):
                     "INVESTIGATIONS_PER_HOUR": "60",
                 }
             )
+        if auth is not None:
+            # Which pool's tokens to trust. The Lambda only reads the pool's public keys, so it needs no permission.
+            env["COGNITO_USER_POOL_ID"] = auth.pool.user_pool_id
         return env
 
     def __init__(
@@ -55,6 +59,7 @@ class BackendStack(Stack):
         cfg: StageConfig,
         data: DataStack,
         backend_dir: Path,
+        auth: AuthStack | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -75,7 +80,7 @@ class BackendStack(Stack):
             memory_size=512,
             timeout=LAMBDA_TIMEOUT,
             log_group=log_group,
-            environment=self._environment(cfg, data),
+            environment=self._environment(cfg, data, auth),
         )
         if cfg.live and data.access_code is not None:
             # Read-only, one named secret each (no wildcard, no list). Fetched once per cold start.
