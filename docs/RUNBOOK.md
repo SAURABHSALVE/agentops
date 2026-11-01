@@ -49,13 +49,16 @@ Server errors return a generic message to the user and log only the error *type*
   repository (see DECISIONS D-032). Redeploy `AgentOps-GitHubOidc` with an admin (non-root) identity.
 
 ## Abuse and cost
-Writes on the public site are open. The access code and its secret exist **only in live mode** (`-c agentProvider=openai`,
-infra `backend_stack.py`); the current mock deployment has none, and a mock investigation costs only a few Lambda
-milliseconds. If someone is hammering it:
+Once the Auth stack is deployed, every write needs a signed-in user; sign-up is open, so anyone with an email can get an
+account. The access code and its secret exist **only in live mode** (`-c agentProvider=openai`, infra `backend_stack.py`);
+the mock deployment has none, and a mock investigation costs only a few Lambda milliseconds. If someone is hammering it:
 1. API Gateway throttling and the per-process rate limit are the backstops. Check the Lambda invocation graph **(console)**.
 2. Before ever enabling live mode, set an **OpenAI project spend limit** in the OpenAI dashboard: it is the real cost cap.
    Live mode also creates the access code, which then gates every write.
-3. As a last resort run `scripts/teardown.sh --stage prod` (it asks you to type the stage name; `--include-data` also removes the table).
+3. Find and disable an abusive account **(console, Cognito, user pool `agentops-prod-users`, Users)**: *Disable user* stops
+   new sign-ins and their token stops working within the hour. To close sign-up entirely, redeploy with a pool that has
+   self sign-up off (change `auth_stack.py`), or `-c auth=none` to remove sign-in (which re-opens writes).
+4. As a last resort run `scripts/teardown.sh --stage prod` (it asks you to type the stage name; `--include-data` also removes the table).
 
 ## Data and privacy
 - Records live 7 days (DynamoDB TTL). Feedback notes are stored with the investigation and are never sent to a model.
@@ -67,3 +70,19 @@ milliseconds. If someone is hammering it:
 There is no backup, by design: the data is demo records that expire in 7 days and the infrastructure is code. To rebuild from
 nothing: bootstrap CDK, deploy `AgentOps-GitHubOidc`, then push to `main` (or run the deploy workflow). **Not rehearsed on
 this account**; do a rehearsal on a `dev` stage before relying on it.
+
+## Sign-in
+- **Users** live in the Cognito user pool `agentops-<stage>-users` (console, Cognito). Their investigations are in the
+  DynamoDB table under the user's `sub` (a UUID shown on the user's page), and expire with the 7-day TTL.
+- **"Sign in" does nothing / "Sign-in is not set up on this site":** the site could not read `/auth-config.json` (written by the
+  Frontend stack deploy). Open `<site>/auth-config.json`; it must show `region`, `userPoolId`, `clientId`, `hostedUiUrl`.
+- **Redirected back with "redirect_mismatch" on the hosted page:** the app client's callback URL must be exactly
+  `<site>/auth/callback` (and the logout URL `<site>/`). They are set by the Frontend stack from the CloudFront address.
+- **401 `invalid_token` on every call after signing in:** the Lambda trusts a different pool than the browser signed in to
+  (`COGNITO_USER_POOL_ID` in the Lambda environment vs the pool in `auth-config.json`), or the Lambda cannot reach
+  `cognito-idp.us-east-1.amazonaws.com` to fetch the signing keys (the logs then say "could not refresh signing keys" and the
+  API answers 503 `auth_unavailable`).
+- **No verification email:** Cognito's built-in sender allows about 50 a day and often lands in spam. Resend from the hosted
+  page; do not bulk-confirm users from the console, because that skips proving the email address.
+- **Removing sign-in:** redeploy with `-c auth=none`. The pool is **kept** in prod (retained); delete it by hand only when
+  you are sure, after switching off its deletion protection.
