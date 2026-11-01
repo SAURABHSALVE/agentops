@@ -171,7 +171,11 @@ try {
       t = await text();
       check("INC-2003 is not shown as resolved", !t.includes("Passed: incident resolved") && !/Resolved/.test(t.split("Investigation")[0]));
       await shot("captured-inc-2003-not-resolved");
-    } else check("INC-2003 proposed a remediation to approve", false);
+    } else if (LIVE) check("INC-2003 proposed a remediation to approve", false);
+    else {
+      // The mock's rules were written for the simulated fixtures (docs/REAL_TELEMETRY.md); only a live model proposes here.
+      check("mock offers no action on INC-2003 and says so (run with --live to exercise the failed verification)", (await text()).includes("No remediation proposed"));
+    }
 
     await goto("/incidents/INC-1001/");
     check("a simulated incident id is not served in captured mode", await waitText("Incident not found", 15000));
