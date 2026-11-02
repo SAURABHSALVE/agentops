@@ -154,6 +154,14 @@ try {
       await waitText("Showing 6 of 6 incidents");
       check("the list shows INC-1001 resolved for alice", /INC-1001[\s\S]{0,200}Resolved/i.test(await text()));
 
+      // ---- "my investigations" ------------------------------------------------------------------
+      check("the header links to My investigations", (await text()).includes("My investigations"));
+      await goto("/");
+      check("home says how many investigations alice has", await waitText("You have 1 investigation", 20000));
+      await goto("/investigations/");
+      check("My investigations lists alice's run and what happened to the fix", (await waitText("Fix approved, and the incident is resolved", 20000)) && (await text()).includes("INC-1001") && (await text()).includes("Confidence: high"));
+      await shot("auth-my-investigations");
+
       // ---- signing out hides it again ----------------------------------------------------------
       check("sign out works", await clickButton("Sign out"));
       check("back at the dashboard, signed out", (await waitText("Showing 6 of 6 incidents", 20000)) && !(await text()).includes(USERS.alice.email));
@@ -161,16 +169,56 @@ try {
       check("a signed-out visitor sees none of alice's investigation", (await waitText("No investigation has been run", 20000)) && !(await text()).includes("Passed: incident resolved"));
       check("...and INC-1001 is not resolved for a visitor", !/Resolved/.test((await text()).split("Investigation")[0]));
 
+      await goto("/investigations/");
+      check("a visitor is asked to sign in to see investigations", await waitText("Sign in to see your investigations", 15000));
+
       // ---- bob is a different person -----------------------------------------------------------
       h.state.user = USERS.bob;
       await clickButton("Sign in");
       check("bob signs in", await waitText(USERS.bob.email, 20000));
+      await goto("/");
+      check("a brand-new account is welcomed and pointed at a first incident", (await waitText("Welcome!", 15000)) && (await text()).includes("Start with INC-1001"));
+      await shot("auth-welcome");
+      await goto("/incidents/INC-1001/");
       check("bob does not see alice's investigation", (await waitText("No investigation has been run", 20000)) && !(await text()).includes("Passed: incident resolved"));
       check("INC-1001 is open for bob", !/Resolved/.test((await text()).split("Investigation")[0]));
       await clickButton("Investigate");
       check("bob's own investigation finishes", await waitText("Finished after", 90000));
       check("bob's approval really runs (alice's did not do it for him)", (await clickButton("Approve simulated action")) && (await waitText("Passed: incident resolved", 20000)));
       await shot("auth-bob-resolved");
+      await goto("/investigations/");
+      check("bob's list holds exactly his own run", (await waitText("Fix approved, and the incident is resolved", 20000)) && (await evaluate(`document.querySelectorAll('ul[aria-label="Your investigations"] li').length`)) === 1);
+      await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+      await goto("/investigations/");
+      await waitText("Fix approved, and the incident is resolved", 20000);
+      const wide = await evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth");
+      check("phone: My investigations does not scroll sideways", wide <= 1, `(${wide}px too wide)`);
+      await shot("auth-my-investigations-phone");
+      await cdp.send("Emulation.clearDeviceMetricsOverride");
+
+      // alice comes back and deletes hers; bob's must survive
+      check("bob signs out", await clickButton("Sign out"));
+      await waitText("Showing 6 of 6 incidents", 20000);
+      h.state.user = USERS.alice;
+      await clickButton("Sign in");
+      check("alice signs in again", await waitText(USERS.alice.email, 20000));
+      await goto("/investigations/");
+      check("alice still has her run", await waitText("Fix approved, and the incident is resolved", 20000));
+      check("deleting asks first", (await clickButton("Delete…")) && (await waitText("This cannot be undone", 10000)));
+      check("cancel keeps everything", (await clickButton("Cancel")) && (await text()).includes("Fix approved, and the incident is resolved"));
+      await clickButton("Delete…");
+      await waitText("This cannot be undone", 10000);
+      check("confirming deletes", (await clickButton("Yes, delete")) && (await waitText("Deleted 1 investigation", 20000)));
+      check("her list is now empty", await waitText("You have not run an investigation yet", 20000));
+      await goto("/incidents/INC-1001/");
+      check("and the incident shows nothing of hers", (await waitText("No investigation has been run", 20000)) && !(await text()).includes("Passed: incident resolved"));
+      await clickButton("Sign out");
+      await waitText("Showing 6 of 6 incidents", 20000);
+      h.state.user = USERS.bob;
+      await clickButton("Sign in");
+      await waitText(USERS.bob.email, 20000);
+      await goto("/investigations/");
+      check("bob's investigation survived alice's deletion", await waitText("Fix approved, and the incident is resolved", 20000));
 
       // ---- a token the server will not accept -------------------------------------------------
       await evaluate(`(() => { const s = JSON.parse(sessionStorage.getItem("agentops-session")); s.accessToken = "forged.token.value"; sessionStorage.setItem("agentops-session", JSON.stringify(s)); })()`);

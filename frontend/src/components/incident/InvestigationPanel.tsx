@@ -50,10 +50,17 @@ export function InvestigationPanel({ investigation, busy, onStart, auth, onSignI
       </div>
 
       {auth.status === "signed_out" && (
-        <p className="mt-2 text-sm text-muted">
-          Anyone can read the incidents. Sign in with your email to run an investigation: what you run, approve and
-          rate is private to your account.
-        </p>
+        <div className="mt-2 space-y-1 text-sm text-muted">
+          <p>
+            Anyone can read the incidents. Sign in with your email to run an investigation: what you run, approve and
+            rate is private to your account.
+          </p>
+          <p>
+            New here? Choose <span className="font-medium text-foreground">Sign up</span> on the next page. You will be
+            emailed a 6-digit code to confirm your address; if it does not arrive within a minute, check your spam
+            folder.
+          </p>
+        </div>
       )}
       {auth.status === "unavailable" && (
         <p className="mt-2 text-sm text-muted">Sign-in is required here but is not set up on this site.</p>

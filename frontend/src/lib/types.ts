@@ -127,3 +127,15 @@ export interface Investigation {
   feedback: Feedback | null;
   simulated: true;
 }
+
+/** One row of "my investigations": the newest run of an incident the signed-in user has investigated. */
+export interface InvestigationSummary {
+  id: string;
+  incident_id: string;
+  incident_title: string;
+  status: InvestigationStatus;
+  started_at: string;
+  confidence: Confidence | null;
+  remediation_status: RemediationStatus | null;
+  helpful: boolean | null;
+}

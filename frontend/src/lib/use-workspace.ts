@@ -63,12 +63,7 @@ export function useWorkspace(incidentId: string) {
           })
           .catch(() => undefined); // optional: the page works without it
         const [inc, tl] = await Promise.all([api.getIncident(incidentId, ctl.signal), api.getTimeline(incidentId, ctl.signal)]);
-        let latest: Investigation | null = null;
-        try {
-          latest = await api.latestInvestigation(incidentId, ctl.signal);
-        } catch (e) {
-          if (!(e instanceof ApiError && e.code === "investigation_not_found")) throw e;
-        }
+        const latest = await api.latestInvestigation(incidentId, ctl.signal);
         if (ctl.signal.aborted) return;
         setIncident(inc);
         setTimeline(tl);
