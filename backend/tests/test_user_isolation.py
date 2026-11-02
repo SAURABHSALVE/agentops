@@ -221,6 +221,8 @@ def test_every_route_that_reads_investigations_is_scoped_to_the_caller() -> None
         "/api/incidents/{incident_id}/investigations/latest",
         "/api/investigations/{investigation_id}",
         "/api/me/investigations",
+        "/api/me/aws-connection",
+        "/api/me/aws-connection/template",
     }
     seen = set()
     for r in router.routes:

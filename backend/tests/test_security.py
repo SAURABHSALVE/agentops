@@ -63,6 +63,7 @@ def test_config_endpoint_tells_the_ui_what_it_needs_and_nothing_secret(sim: Simu
         "write_access": "code_required",
         "auth": {"mode": "none"},
         "provider": {"kind": "mock", "label": "Mock provider: deterministic rule-based policy, not an LLM"},
+        "aws_connect": {"available": False},  # off unless an account is configured and sign-in is on
     }
     assert CODE not in str(body)
 
@@ -203,6 +204,7 @@ def test_every_write_route_is_behind_the_access_gate() -> None:
         for r in router.routes
         if isinstance(r, APIRoute) and (r.methods or set()) & {"POST", "PUT", "PATCH", "DELETE"}
     ]
-    assert len(writes) == 5  # start, approve, reject, feedback, delete my investigations
+    # start, approve, reject, feedback, delete my investigations, then save settings, register role and disconnect
+    assert len(writes) == 8
     for route in writes:
         assert any(d.call is require_access for d in route.dependant.dependencies), route.path
