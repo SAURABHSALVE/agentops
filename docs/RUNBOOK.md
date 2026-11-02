@@ -106,3 +106,11 @@ Default is the offline mock. To turn on the real model (spends OpenAI tokens, so
    3 a minute and 20 an hour.
 To switch back: delete or reset `AGENT_PROVIDER` and redeploy. A push to `main` with `AGENT_PROVIDER=openai` set but no manual
 approval fails safe at the IAM check instead of going live.
+
+## Connecting an AWS account (Phase 16, off by default)
+The page and routes exist but stay hidden until `AWS_CONNECT_ACCOUNT_ID` (12 digits, the account AgentOps runs in) is set on the
+backend and sign-in is on. `AWS_CONNECT_ALLOWED_ACCOUNTS` lists the accounts that may be registered; leave it empty for
+"only AgentOps's own account". `AWS_CONNECT_PRINCIPAL_ARN` optionally narrows the trust from the account root to one role.
+The CDK stacks do not set these yet (16B does, together with the permission to assume the role), so production shows nothing.
+To try it locally: run the backend with sign-in on (see the Sign-in section) and those variables, or run
+`AUTH=1 node scripts/e2e-ui.mjs`, which starts a fake sign-in and switches the feature on.

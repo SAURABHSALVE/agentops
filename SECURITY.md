@@ -79,3 +79,13 @@ demo locally. The OpenAI key lives in a managed secret store (decided in Phase 6
 
 ## Reporting
 Personal portfolio project; no formal disclosure process.
+
+## Connecting an AWS account (Phase 16)
+Off by default. When on: the user creates the role in their own account from a template they can read first; AgentOps stores
+the role ARN, region, log group names and an ExternalId, never a key. The role can only read alarms, metrics, change events
+and the log groups the user listed (eight actions, pinned by a test). The ExternalId is made by the server, differs per user
+and does not change, so one user cannot make AgentOps use another's role. Only accounts on `AWS_CONNECT_ALLOWED_ACCOUNTS` can
+be registered (default: AgentOps's own). The connection is per signed-in user, never shared, and is removed by Disconnect
+(the user deletes the CloudFormation stack to remove the role itself). Not yet built: assuming the role and reading anything
+(Phase 16B); until then nothing in a real account is read. Redaction (`app/redaction.py`) must sit on that path before any
+live log text reaches a model or a screen.

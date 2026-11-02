@@ -18,9 +18,15 @@ from app.agent.store import InMemoryInvestigationStore, InvestigationStore
 from app.api import router
 from app.auth import TokenVerifier, build_verifier
 from app.config import APP_VERSION, Settings, load_env_file
+from app.connections.service import ConnectionService
+from app.connections.store import ConnectionStore, InMemoryConnectionStore
 from app.errors import (
     AgentOpsError,
     AuthUnavailableError,
+    AwsAccountNotEnabledError,
+    AwsConnectionNotSetUpError,
+    AwsConnectUnavailableError,
+    ConsentOutOfDateError,
     FeedbackNotAllowedError,
     IncidentNotFoundError,
     InvalidTokenError,
@@ -56,6 +62,11 @@ _STATUS_BY_CODE = {
     InvalidTokenError.code: 401,
     AuthUnavailableError.code: 503,
     RateLimitedError.code: 429,
+    # 409, not 403 or 404: CloudFront swaps the body of those two for the site's HTML 404 page (see the runbook).
+    AwsConnectUnavailableError.code: 409,
+    AwsConnectionNotSetUpError.code: 409,
+    AwsAccountNotEnabledError.code: 409,
+    ConsentOutOfDateError.code: 409,
 }
 
 
@@ -73,6 +84,18 @@ def _build_store(settings: Settings) -> InvestigationStore:
     return InMemoryInvestigationStore()
 
 
+def _build_connection_store(settings: Settings) -> ConnectionStore:
+    if settings.storage_mode == "dynamodb":
+        from app.connections.dynamodb_store import DynamoDbConnectionStore  # keeps boto3 optional locally
+
+        return DynamoDbConnectionStore.for_table(settings.dynamodb_table)
+    if settings.storage_mode == "local":
+        from app.connections.sqlite_store import SqliteConnectionStore
+
+        return SqliteConnectionStore(Path(settings.local_data_dir) / "agentops.sqlite3")
+    return InMemoryConnectionStore()
+
+
 def _build_simulator(settings: Settings) -> Simulator:
     source: TelemetrySource = (
         CapturedSource.load(Path(settings.telemetry_dataset)) if settings.telemetry_dataset else FixtureSource()
@@ -87,6 +110,7 @@ def create_app(
     store: InvestigationStore | None = None,
     access: AccessGate | None = None,
     verifier: TokenVerifier | None = None,
+    connection_store: ConnectionStore | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
@@ -104,6 +128,14 @@ def create_app(
 
     app.state.access = access or AccessGate(load_access_code())
     app.state.verifier = verifier or build_verifier(settings)  # None unless a Cognito user pool is configured
+    info = app.state.investigations.provider_info
+    app.state.connections = ConnectionService(
+        connection_store or _build_connection_store(settings),
+        settings,
+        sign_in_on=app.state.verifier is not None,
+        provider_kind=info.kind,
+        provider_label=info.label,
+    )
     app.state.limiter = RateLimiter(settings.rate_per_minute, settings.rate_per_hour)
     app.state.user_limiter = KeyedRateLimiter(settings.user_rate_per_minute, settings.user_rate_per_hour)
 
@@ -149,7 +181,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.cors_allow_origins),
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Content-Type", "Authorization", ACCESS_HEADER],
     )
 

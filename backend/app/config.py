@@ -9,6 +9,11 @@ COGNITO_POOL_ID_PATTERN = r"[a-z]{2}(?:-[a-z]+)+-\d_[A-Za-z0-9]{6,32}"
 _ISSUER_URL = re.compile(r"(?:https://[A-Za-z0-9.-]+|http://(?:127\.0\.0\.1|localhost))(?::\d+)?(?:/[A-Za-z0-9._-]+)*")
 
 
+_ACCOUNT_ID = re.compile(r"\d{12}")
+# The one place a trust policy may point: that account's root, or one named role in it (no paths, no wildcards).
+_PRINCIPAL_ARN = re.compile(r"arn:aws:iam::(\d{12}):(?:root|role/[A-Za-z0-9+=,.@_-]{1,64})")
+
+
 class ConfigError(Exception):
     """Invalid or unsupported configuration. Raised at startup, never while serving a request."""
 
@@ -76,6 +81,15 @@ class Settings:
     cognito_user_pool_id: str = ""
     # Test seam: a full issuer URL to use instead of the pool's own (a local fake issuer). Not set in AWS.
     cognito_issuer_override: str = ""
+    # Connecting a user's own AWS account (Phase 16). The feature is off unless the account AgentOps itself runs in is
+    # named here AND sign-in is on: a connection belongs to one signed-in user and is never shared.
+    aws_connect_account_id: str = ""
+    # Who the user's read-only role will trust. Empty means that account's root (any principal in it that is allowed to
+    # assume roles); a role ARN narrows it to exactly one role, which is what a deployed stack should set.
+    aws_connect_principal_arn: str = ""
+    # Which customer accounts may be registered at all. Empty means only AgentOps's own account, so the first rollout is
+    # the owner's account and nobody else's; widening it is a deliberate, reviewed change.
+    aws_connect_allowed_accounts: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -101,6 +115,19 @@ class Settings:
             raise ConfigError("COGNITO_ISSUER must be an https URL (http only for localhost).")
         if issuer and not pool:
             raise ConfigError("COGNITO_ISSUER only applies together with COGNITO_USER_POOL_ID.")
+        connect_account = os.environ.get("AWS_CONNECT_ACCOUNT_ID", "").strip()
+        if connect_account and not _ACCOUNT_ID.fullmatch(connect_account):
+            raise ConfigError("AWS_CONNECT_ACCOUNT_ID must be a 12-digit AWS account id.")
+        principal = os.environ.get("AWS_CONNECT_PRINCIPAL_ARN", "").strip()
+        if principal:
+            match = _PRINCIPAL_ARN.fullmatch(principal)
+            if not connect_account or match is None or match.group(1) != connect_account:
+                raise ConfigError("AWS_CONNECT_PRINCIPAL_ARN must be a role or root ARN in AWS_CONNECT_ACCOUNT_ID.")
+        allowed = tuple(a.strip() for a in os.environ.get("AWS_CONNECT_ALLOWED_ACCOUNTS", "").split(",") if a.strip())
+        if allowed and not connect_account:
+            raise ConfigError("AWS_CONNECT_ALLOWED_ACCOUNTS only applies together with AWS_CONNECT_ACCOUNT_ID.")
+        if any(not _ACCOUNT_ID.fullmatch(a) for a in allowed):
+            raise ConfigError("AWS_CONNECT_ALLOWED_ACCOUNTS must be a comma-separated list of 12-digit account ids.")
         return cls(
             cors_allow_origins=origins,
             agent_provider=provider,
@@ -121,4 +148,7 @@ class Settings:
             telemetry_dataset=os.environ.get("TELEMETRY_DATASET", "").strip(),
             cognito_user_pool_id=pool,
             cognito_issuer_override=issuer,
+            aws_connect_account_id=connect_account,
+            aws_connect_principal_arn=principal,
+            aws_connect_allowed_accounts=allowed,
         )

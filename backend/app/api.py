@@ -3,6 +3,8 @@
 Writes: start an investigation, approve or reject the remediation it proposed, and leave feedback. The
 first three take no request body, so a client cannot choose an action, a tool or an incident beyond the path
 ids. Feedback takes a verdict and a short note, which are stored and never reach a model or a tool.
+The AWS-connection routes (Phase 16) take small, closed bodies (a region, log group names, an agreement, a role ARN);
+they only describe where to look in the caller's own account and run nothing.
 
 Who is calling comes only from a verified bearer token (app/auth.py), never from a header or body the client
 chooses. Investigations, approvals and feedback belong to that user. Incidents and diagnostics are shared and read-only.
@@ -11,10 +13,14 @@ chooses. Investigations, approvals and feedback belong to that user. Incidents a
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, Path, Query, Request
+from fastapi.responses import JSONResponse
 
 from app.agent.models import FeedbackRequest, Investigation, InvestigationSummary
 from app.agent.service import InvestigationService
 from app.config import APP_VERSION
+from app.connections.models import ConnectionSettings, ConnectionView, RoleRegistration
+from app.connections.service import ConnectionService
+from app.connections.template import TEMPLATE_FILE
 from app.errors import InvalidTokenError, SignInRequiredError
 from app.identity import ANONYMOUS_OWNER
 from app.schemas import (
@@ -89,6 +95,11 @@ def _investigations(request: Request, owner: str = ANONYMOUS_OWNER) -> Investiga
     return svc.scoped(owner)
 
 
+def _connections(request: Request) -> ConnectionService:
+    svc: ConnectionService = request.app.state.connections
+    return svc
+
+
 @router.get("/api/config", tags=["system"])
 def public_config(request: Request) -> dict[str, Any]:
     """What the UI needs to know up front. Contains nothing secret."""
@@ -98,6 +109,7 @@ def public_config(request: Request) -> dict[str, Any]:
         "write_access": "code_required" if request.app.state.access.required else "open",
         "auth": {"mode": "none" if request.app.state.verifier is None else "cognito"},
         "provider": {"kind": info.kind, "label": info.label},
+        "aws_connect": {"available": _connections(request).available_for_anyone()},
     }
 
 
@@ -209,6 +221,57 @@ def delete_my_investigations(request: Request, owner: SignedInOwner) -> dict[str
     Their sign-in account is untouched. Takes no body. Refused (409) while one of their investigations is running.
     """
     return {"deleted": _investigations(request, owner).delete_mine()}
+
+
+@router.get("/api/me/aws-connection", response_model=ConnectionView, tags=["aws-connection"])
+def aws_connection(request: Request, owner: Owner) -> ConnectionView:
+    """The caller's AWS connection, plus what they need to set one up. `available: false` says why it cannot be used."""
+    return _connections(request).view(owner)
+
+
+@router.put(
+    "/api/me/aws-connection",
+    response_model=ConnectionView,
+    responses=_START_ERRORS,
+    tags=["aws-connection"],
+    dependencies=[Depends(require_access)],
+)
+def save_aws_connection(body: ConnectionSettings, request: Request, owner: SignedInOwner) -> ConnectionView:
+    """Step 1: the region and log groups to look at, and the agreement to how the data is used."""
+    return _connections(request).save_settings(owner, body)
+
+
+@router.get("/api/me/aws-connection/template", responses=_START_ERRORS, tags=["aws-connection"])
+def aws_connection_template(request: Request, owner: SignedInOwner) -> JSONResponse:
+    """Step 2: the CloudFormation template that creates the read-only role in the caller's own account."""
+    return JSONResponse(
+        content=_connections(request).template(owner),
+        headers={"Content-Disposition": f'attachment; filename="{TEMPLATE_FILE}"'},
+    )
+
+
+@router.put(
+    "/api/me/aws-connection/role",
+    response_model=ConnectionView,
+    responses=_START_ERRORS,
+    tags=["aws-connection"],
+    dependencies=[Depends(require_access)],
+)
+def register_aws_role(body: RoleRegistration, request: Request, owner: SignedInOwner) -> ConnectionView:
+    """Step 3: the ARN of the role the template created. Stored as given; it is proven to work by using it."""
+    return _connections(request).register_role(owner, body)
+
+
+@router.delete(
+    "/api/me/aws-connection",
+    response_model=ConnectionView,
+    responses=_START_ERRORS,
+    tags=["aws-connection"],
+    dependencies=[Depends(require_access)],
+)
+def disconnect_aws(request: Request, owner: SignedInOwner) -> ConnectionView:
+    """Forget the connection. The role in the user's account stays until they delete its stack."""
+    return _connections(request).disconnect(owner)
 
 
 @router.get(

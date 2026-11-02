@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { api } from "./api";
+import { api, type PublicConfig } from "./api";
 import {
   SignInError,
   getSession,
@@ -24,15 +24,30 @@ export type AuthState =
 
 type Mode = "unknown" | "none" | "cognito";
 
-let modePromise: Promise<Mode> | null = null;
+let configPromise: Promise<PublicConfig | null> | null = null;
 
-/** Whether the API wants sign-in. Asked once per page load and shared by every component that needs it. */
+/** The API's public settings. Asked once per page load and shared by every component that needs them. */
+function loadConfig(): Promise<PublicConfig | null> {
+  configPromise ??= api.config().catch(() => null);
+  return configPromise;
+}
+
+/** Whether the API wants sign-in. */
 function loadMode(): Promise<Mode> {
-  modePromise ??= api
-    .config()
-    .then((c): Mode => (c.auth?.mode === "cognito" ? "cognito" : "none"))
-    .catch((): Mode => "unknown");
-  return modePromise;
+  return loadConfig().then((c): Mode => (c === null ? "unknown" : c.auth?.mode === "cognito" ? "cognito" : "none"));
+}
+
+/** Whether this site offers "connect your AWS account" (it is off unless the operator switched it on). */
+export function useAwsConnectAvailable(): boolean {
+  const [available, setAvailable] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void loadConfig().then((c) => alive && setAvailable(c?.aws_connect?.available === true));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return available;
 }
 
 export function useAuth(): AuthState & { error: string | null; signIn: (returnTo?: string) => void; signOut: () => void } {

@@ -131,6 +131,41 @@ export interface Investigation {
 }
 
 /** One row of "my investigations": the newest run of an incident the signed-in user has investigated. */
+/** One permission the read-only role in the user's AWS account is given, as the review screen shows it. */
+export interface AwsPermission {
+  id: string;
+  title: string;
+  why: string;
+  actions: string[];
+  applies_to: "account" | "log_groups";
+  reads: string;
+  never: string;
+}
+
+/** The user's AWS connection and what they need to set one up. `available: false` says why via `reason`. */
+export interface AwsConnection {
+  available: boolean;
+  reason: "sign_in_off" | "sign_in_required" | "not_configured" | null;
+  /** `registered` means we hold the role's ARN; it has not been tried yet. */
+  status: "not_connected" | "draft" | "registered";
+  region: string | null;
+  log_groups: string[];
+  log_groups_use_wildcard: boolean;
+  role_arn: string | null;
+  external_id: string | null;
+  consent_current: boolean;
+  consent: { version: string; points: string[] } | null;
+  permissions: AwsPermission[];
+  setup: { role_name: string; template_file: string; trusted_account_id: string } | null;
+  updated_at: string | null;
+}
+
+export interface AwsConnectionSettings {
+  region: string;
+  log_groups: string[];
+  consent_version: string;
+}
+
 export interface InvestigationSummary {
   id: string;
   incident_id: string;

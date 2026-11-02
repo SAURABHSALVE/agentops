@@ -100,7 +100,19 @@ WRITE_ROUTES = {
     "/api/investigations/{investigation_id}/feedback",
 }
 FEEDBACK_ROUTE = "/api/investigations/{investigation_id}/feedback"
-DELETE_ROUTE = "/api/me/investigations"  # the only DELETE: removes the caller's own records, no body
+# DELETEs remove only the caller's own records and take no body.
+DELETE_ROUTES = {"/api/me/investigations", "/api/me/aws-connection"}
+# PUTs describe where to look in the caller's own AWS account (Phase 16). Each body is closed: no extra fields.
+PUT_ROUTES = {
+    "/api/me/aws-connection": {"region", "log_groups", "consent_version", "accept_data_use"},
+    "/api/me/aws-connection/role": {"role_arn"},
+}
+
+
+def _body_schema(doc: dict, operation: dict) -> dict:  # type: ignore[type-arg]
+    ref = operation["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    schema: dict = doc["components"]["schemas"][ref.rsplit("/", 1)[1]]  # type: ignore[type-arg]
+    return schema
 
 
 def test_the_only_write_routes_are_known_and_only_feedback_takes_a_body(client: TestClient) -> None:
@@ -108,18 +120,24 @@ def test_the_only_write_routes_are_known_and_only_feedback_takes_a_body(client: 
     paths = doc["paths"]
     for path, ops in paths.items():
         allowed = (
-            {"get"} | ({"post"} if path in WRITE_ROUTES else set()) | ({"delete"} if path == DELETE_ROUTE else set())
+            {"get"}
+            | ({"post"} if path in WRITE_ROUTES else set())
+            | ({"delete"} if path in DELETE_ROUTES else set())
+            | ({"put"} if path in PUT_ROUTES else set())
         )
         assert set(ops) <= allowed, f"unexpected write on {path}"
         if "post" in ops and path != FEEDBACK_ROUTE:
             assert "requestBody" not in ops["post"], f"{path} must not accept a body"
         if "delete" in ops:
             assert "requestBody" not in ops["delete"], f"{path} must not accept a body"
-    assert WRITE_ROUTES <= set(paths)
-    # The one body is a verdict and a short note: it cannot name an action, a tool or an incident.
-    ref = paths[FEEDBACK_ROUTE]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
-    schema = doc["components"]["schemas"][ref.rsplit("/", 1)[1]]
+    assert WRITE_ROUTES | DELETE_ROUTES | set(PUT_ROUTES) <= set(paths)
+    # The one POST body is a verdict and a short note: it cannot name an action, a tool or an incident.
+    schema = _body_schema(doc, paths[FEEDBACK_ROUTE]["post"])
     assert set(schema["properties"]) == {"helpful", "comment"} and schema["additionalProperties"] is False
+    # The PUT bodies name a region, log groups, an agreement or a role ARN, and nothing else.
+    for path, fields in PUT_ROUTES.items():
+        schema = _body_schema(doc, paths[path]["put"])
+        assert set(schema["properties"]) == fields and schema["additionalProperties"] is False, path
     # There is no way to name an action or run one directly.
     assert client.post("/api/incidents/INC-1001/remediation", json={}).status_code in (404, 405)
     assert client.post("/api/remediation/simulate_restart_worker").status_code in (404, 405)

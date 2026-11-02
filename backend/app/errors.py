@@ -74,6 +74,30 @@ class AuthUnavailableError(AgentOpsError):
     code = "auth_unavailable"
 
 
+class AwsConnectUnavailableError(AgentOpsError):
+    """Connecting an AWS account is not switched on here (sign-in is off, or no account is configured)."""
+
+    code = "aws_connect_unavailable"
+
+
+class AwsConnectionNotSetUpError(AgentOpsError):
+    """The step needs the connection settings (region, log groups, consent) to have been saved first."""
+
+    code = "aws_connection_not_set_up"
+
+
+class AwsAccountNotEnabledError(AgentOpsError):
+    """The role belongs to an AWS account that is not on this deployment's list of accounts that may connect."""
+
+    code = "aws_account_not_enabled"
+
+
+class ConsentOutOfDateError(AgentOpsError):
+    """The user agreed to a different wording than the one this deployment now shows."""
+
+    code = "consent_out_of_date"
+
+
 class RateLimitedError(AgentOpsError):
     code = "rate_limited"
 
