@@ -93,8 +93,18 @@ export const api = {
   getIncident: (id: string, signal?: AbortSignal) => request<Incident>(`/api/incidents/${enc(id)}`, { signal }),
   getTimeline: (id: string, signal?: AbortSignal) =>
     request<TimelineEvent[]>(`/api/incidents/${enc(id)}/timeline`, { signal }),
-  latestInvestigation: (id: string, signal?: AbortSignal) =>
-    request<Investigation>(`/api/incidents/${enc(id)}/investigations/latest`, { signal }),
+  /** A 404 here means "you have not investigated this yet". CloudFront answers every 404, the API's included, with
+   *  the site's HTML 404 page, so the error code in the body cannot be relied on: go by the status. */
+  latestInvestigation: async (id: string, signal?: AbortSignal) => {
+    try {
+      return await request<Investigation>(`/api/incidents/${enc(id)}/investigations/latest`, { signal });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        throw new ApiError("No investigation has been run for this incident.", 404, "investigation_not_found");
+      }
+      throw e;
+    }
+  },
   getInvestigation: (id: string, signal?: AbortSignal) =>
     request<Investigation>(`/api/investigations/${enc(id)}`, { signal }),
   startInvestigation: (incidentId: string) =>

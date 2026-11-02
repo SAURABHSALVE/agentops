@@ -84,5 +84,10 @@ this account**; do a rehearsal on a `dev` stage before relying on it.
   API answers 503 `auth_unavailable`).
 - **No verification email:** Cognito's built-in sender allows about 50 a day and often lands in spam. Resend from the hosted
   page; do not bulk-confirm users from the console, because that skips proving the email address.
+- **"Incident not found" on a real incident right after signing in (fixed 2026-11-02):** CloudFront has a distribution-wide custom
+  error response, so *every* 404 (the API's too) is answered with the site's HTML 404 page. The status survives, the JSON
+  error body does not. `GET .../investigations/latest` answers 404 for "you have not investigated this yet", which is normal
+  for a new account; the site now goes by the status. **Remember this when adding an API route that returns 404 on purpose**:
+  clients must not depend on its `error.code`. `scripts/e2e-auth-harness.mjs` reproduces this behaviour.
 - **Removing sign-in:** redeploy with `-c auth=none`. The pool is **kept** in prod (retained); delete it by hand only when
   you are sure, after switching off its deletion protection.
