@@ -162,7 +162,7 @@ function site(authConfig) {
       }
       return;
     }
-    if (url.pathname === "/auth-config.json") {
+    if (url.pathname === "/auth-config.json" && authConfig) {
       res.writeHead(200, { "Content-Type": "application/json", "Content-Security-Policy": CSP }).end(JSON.stringify(authConfig));
       return;
     }
@@ -179,7 +179,8 @@ function site(authConfig) {
   });
 }
 
-export async function startHarness() {
+/** `auth: false` starts the same stack without sign-in (what STACK=1 uses); `backendEnv` adds settings to the API. */
+export async function startHarness({ auth = true, backendEnv = {} } = {}) {
   if (!existsSync(join(ROOT, "frontend", "out", "index.html"))) {
     throw new Error("frontend/out is missing: run `npm run build` in frontend/ first.");
   }
@@ -204,8 +205,9 @@ export async function startHarness() {
         TELEMETRY_DATASET: "",
         ACCESS_CODE: "",
         ACCESS_SECRET_ARN: "",
-        COGNITO_USER_POOL_ID: POOL_ID,
-        COGNITO_ISSUER: `http://localhost:${ISSUER_PORT}/pool`,
+        COGNITO_USER_POOL_ID: auth ? POOL_ID : "",
+        COGNITO_ISSUER: auth ? `http://localhost:${ISSUER_PORT}/pool` : "",
+        ...backendEnv,
       },
     },
   );
@@ -219,12 +221,11 @@ export async function startHarness() {
     await new Promise((r) => setTimeout(r, 200));
   }
 
-  const web = site({
-    region: "us-east-1",
-    userPoolId: POOL_ID,
-    clientId: CLIENT_ID,
-    hostedUiUrl: `http://localhost:${ISSUER_PORT}`,
-  });
+  const web = site(
+    auth
+      ? { region: "us-east-1", userPoolId: POOL_ID, clientId: CLIENT_ID, hostedUiUrl: `http://localhost:${ISSUER_PORT}` }
+      : null,
+  );
   await listen(web, SITE_PORT);
 
   return {

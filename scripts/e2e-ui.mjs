@@ -9,6 +9,8 @@
 // Env: CHROME (browser path), UI (default http://localhost:3000), SHOTS (directory for screenshots).
 // CAPTURED=1 expects the API to serve the captured lab dataset (see docs/REAL_TELEMETRY.md).
 // --live expects the API to run with AGENT_PROVIDER=openai and only checks properties that hold for a real model.
+// STACK=1 (with none of the modes below, or with GATED=<code> / CAPTURED=1) starts its own API and serves the production
+// build in frontend/out on one origin with sign-in off, instead of using a dev server you started: nothing else to run.
 // AUTH=1 checks sign-in end to end against a fake Cognito, starting its own API and serving frontend/out
 // (run `npm run build` in frontend/ first); it needs nothing else running. See scripts/e2e-auth-harness.mjs.
 
@@ -120,6 +122,16 @@ async function shot(name) {
   mkdirSync(SHOTS, { recursive: true });
   const { data } = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   writeFileSync(join(SHOTS, `${name}.png`), Buffer.from(data, "base64"));
+}
+
+let stack = null;
+if (process.env.STACK && !process.env.AUTH) {
+  const { startHarness } = await import("./e2e-auth-harness.mjs");
+  const backendEnv = {};
+  if (process.env.GATED) backendEnv.ACCESS_CODE = process.env.GATED;
+  if (process.env.CAPTURED) backendEnv.TELEMETRY_DATASET = join(import.meta.dirname, "..", "backend", "data", "captured", "lab-capture.json");
+  stack = await startHarness({ auth: false, backendEnv });
+  UI = stack.siteUrl;
 }
 
 try {
@@ -412,6 +424,7 @@ try {
     failures++;
   }
 } finally {
+  if (stack) await stack.stop();
   cdp.close();
   proc.kill();
   await sleep(500);
