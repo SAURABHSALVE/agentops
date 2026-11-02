@@ -40,6 +40,15 @@ export function EvidencePanel({ investigation }: { investigation: Investigation 
               <span className="text-muted">{CONFIDENCE_MEANING[findings.confidence]}</span>
             </p>
             <p className="mt-2 text-muted">{findings.confidence_rationale}</p>
+            {findings.confidence_lowered_from && (
+              <p
+                className="mt-2 rounded border border-border bg-surface px-2 py-1 text-xs text-muted"
+                title="The agent claimed more than the metrics and deployments it looked at support, so the system lowered it."
+              >
+                The agent first claimed <span className="font-medium capitalize">{findings.confidence_lowered_from}</span>{" "}
+                confidence; the system lowered it because the evidence gathered does not support more.
+              </p>
+            )}
             <h3 className="mt-4 text-xs font-medium uppercase tracking-wide text-muted">What to do next</h3>
             <p className="mt-1">{findings.recommended_next_step}</p>
           </div>

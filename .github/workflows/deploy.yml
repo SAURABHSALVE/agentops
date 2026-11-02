@@ -80,12 +80,17 @@ jobs:
       - name: cdk deploy
         env:
           ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
+          # "mock" (offline, free) unless the repository variable AGENT_PROVIDER is "openai"; see README,
+          # "Turning the live AI on". Live mode also needs the OpenAI key in Secrets Manager and a manual deploy.
+          AGENT_PROVIDER: ${{ vars.AGENT_PROVIDER || 'mock' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
           # `broadening` makes the deploy fail (not prompt) if IAM or network access would widen, so a pipeline
           # cannot silently grant itself more. Re-run manually with the input above after reviewing the change.
           APPROVAL: ${{ inputs.allow_iam_changes && 'never' || 'broadening' }}
         run: |
           echo "::add-mask::$ALERT_EMAIL"
           npx cdk deploy 'AgentOps-prod-*' -c stage=prod -c "alertEmail=$ALERT_EMAIL" \
+            -c "agentProvider=$AGENT_PROVIDER" -c "openaiModel=$OPENAI_MODEL" \
             --require-approval "$APPROVAL" --outputs-file ../cdk-outputs.json --progress events
       - name: Smoke test the live site
         working-directory: .

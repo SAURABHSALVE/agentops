@@ -64,6 +64,8 @@ export interface Findings {
   root_cause_hypothesis: string;
   confidence: Confidence;
   confidence_rationale: string;
+  /** Set when the backend lowered the confidence the agent claimed, because the evidence it gathered did not support it. */
+  confidence_lowered_from?: Confidence | null;
   evidence: EvidenceItem[];
   alternative_hypotheses: string[];
   recommended_next_step: string;

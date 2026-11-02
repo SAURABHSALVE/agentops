@@ -19,6 +19,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.agent.calibration import Ceiling, evidence_ceiling
 from app.agent.models import (
     EvidenceSource,
     Failure,
@@ -99,8 +100,15 @@ def _normalise_ids(calls: tuple[ToolCallRequest, ...], taken: int) -> tuple[Tool
     return tuple(out)
 
 
-def validate_answer(text: str, grounded: dict[str, EvidenceSource], service: str) -> Findings:
-    """Turn raw provider text into Findings, or raise _Reject. Pure; no provider or tool access."""
+def validate_answer(
+    text: str, grounded: dict[str, EvidenceSource], service: str, ceiling: Ceiling | None = None
+) -> Findings:
+    """Turn raw provider text into Findings, or raise _Reject. Pure; no provider or tool access.
+
+    `ceiling` is what this run's evidence supports. A provider that claims more is lowered to it (never raised), and
+    the change is recorded in the findings. A fix proposed with a confidence that falls to low is withheld rather
+    than failing the run; a fix that is off the allowlist or inapplicable still fails it.
+    """
     if len(text) > MAX_FINAL_TEXT_CHARS:
         raise _Reject("invalid_output")
     try:
@@ -123,16 +131,26 @@ def validate_answer(text: str, grounded: dict[str, EvidenceSource], service: str
             action_id=spec.action_id, description=spec.description, expected_effect=spec.expected_effect
         )
 
+    confidence, rationale, limitations = answer.confidence, answer.confidence_rationale, list(answer.limitations)
+    lowered_from = None
+    if ceiling is not None and ceiling.lowers(confidence):
+        lowered_from, confidence = confidence, ceiling.level
+        rationale = f"{rationale} [Lowered from {lowered_from} to {confidence} by a system check: {ceiling.reason}.]"
+        if confidence == "low" and remediation is not None:
+            remediation = None
+            limitations.append("A suggested fix was withheld because the evidence supports only low confidence.")
+
     return Findings(
         summary=answer.summary,
         root_cause_hypothesis=answer.root_cause_hypothesis,
-        confidence=answer.confidence,
-        confidence_rationale=answer.confidence_rationale,
+        confidence=confidence,
+        confidence_rationale=rationale,
+        confidence_lowered_from=lowered_from,
         evidence=answer.evidence,
         alternative_hypotheses=answer.alternative_hypotheses,
         recommended_next_step=answer.recommended_next_step,
         remediation=remediation,
-        limitations=answer.limitations,
+        limitations=limitations,
     )
 
 
@@ -159,6 +177,7 @@ class Coordinator:
         limits = self._limits
         messages: list[Message] = [Message("user", USER_PROMPT.format(incident_id=initial.incident_id))]
         grounded: dict[str, EvidenceSource] = {}
+        observed: list[tuple[str, dict[str, Any]]] = []  # successful tool results, for the confidence ceiling
         records: list[ToolCallRecord] = []
         rounds = tokens_in = tokens_out = 0
 
@@ -211,7 +230,7 @@ class Coordinator:
 
             if response.final_text is not None:
                 try:
-                    findings = validate_answer(response.final_text, grounded, service)
+                    findings = validate_answer(response.final_text, grounded, service, evidence_ceiling(observed))
                 except _Reject as rejected:
                     return fail(rejected.code)
                 state = RemediationRecord(action_id=findings.remediation.action_id) if findings.remediation else None
@@ -252,6 +271,8 @@ class Coordinator:
                     outcome.duration_ms,
                 )
                 grounded.update(outcome.reference_sources)
+                if outcome.ok:
+                    observed.append((outcome.name, outcome.payload))
                 records.append(
                     ToolCallRecord(
                         id=record_id,
