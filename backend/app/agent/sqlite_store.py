@@ -148,6 +148,10 @@ class SqliteInvestigationStore:
             ).fetchone()
         return self._load(row[0]) if row else None
 
+    def delete_for_owner(self, owner: str, incident_ids: list[str]) -> int:
+        with self._connect() as db:
+            return db.execute("DELETE FROM investigations WHERE owner = ?", (owner,)).rowcount
+
     def list_for_incident(self, owner: str, incident_id: str) -> list[Investigation]:
         with self._connect() as db:
             rows = db.execute(

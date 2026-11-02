@@ -12,7 +12,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, Path, Query, Request
 
-from app.agent.models import FeedbackRequest, Investigation
+from app.agent.models import FeedbackRequest, Investigation, InvestigationSummary
 from app.agent.service import InvestigationService
 from app.config import APP_VERSION
 from app.errors import InvalidTokenError, SignInRequiredError
@@ -188,13 +188,38 @@ def start_investigation(
     return started
 
 
+@router.get("/api/me/investigations", response_model=list[InvestigationSummary], tags=["account"])
+def my_investigations(request: Request, owner: SignedInOwner) -> list[InvestigationSummary]:
+    """The caller's newest investigation of each incident they have investigated, newest first."""
+    return _investigations(request, owner).mine()
+
+
+@router.delete(
+    "/api/me/investigations",
+    responses=_START_ERRORS,
+    tags=["account"],
+    dependencies=[Depends(require_access)],
+)
+def delete_my_investigations(request: Request, owner: SignedInOwner) -> dict[str, int]:
+    """Delete everything the caller has recorded: investigations, approvals, feedback and applied simulated fixes.
+
+    Their sign-in account is untouched. Takes no body. Refused (409) while one of their investigations is running.
+    """
+    return {"deleted": _investigations(request, owner).delete_mine()}
+
+
 @router.get(
     "/api/incidents/{incident_id}/investigations/latest",
-    response_model=Investigation,
+    response_model=Investigation | None,
     responses=_ERRORS,
     tags=["investigations"],
 )
-def latest_investigation(incident_id: IncidentIdPath, request: Request, owner: Owner) -> Investigation:
+def latest_investigation(incident_id: IncidentIdPath, request: Request, owner: Owner) -> Investigation | None:
+    """The caller's newest investigation of this incident, or `null` if they have not run one yet.
+
+    "Nothing yet" is a normal state, not an error, so it is a 200: a 404 here would show up as a failed request in
+    every first-time visitor's browser, and CloudFront would replace its body with the site's HTML 404 page.
+    """
     return _investigations(request, owner).latest(incident_id)
 
 

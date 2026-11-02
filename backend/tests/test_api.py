@@ -100,15 +100,21 @@ WRITE_ROUTES = {
     "/api/investigations/{investigation_id}/feedback",
 }
 FEEDBACK_ROUTE = "/api/investigations/{investigation_id}/feedback"
+DELETE_ROUTE = "/api/me/investigations"  # the only DELETE: removes the caller's own records, no body
 
 
 def test_the_only_write_routes_are_known_and_only_feedback_takes_a_body(client: TestClient) -> None:
     doc = client.get("/openapi.json").json()
     paths = doc["paths"]
     for path, ops in paths.items():
-        assert set(ops) <= ({"get", "post"} if path in WRITE_ROUTES else {"get"}), f"unexpected write on {path}"
+        allowed = (
+            {"get"} | ({"post"} if path in WRITE_ROUTES else set()) | ({"delete"} if path == DELETE_ROUTE else set())
+        )
+        assert set(ops) <= allowed, f"unexpected write on {path}"
         if "post" in ops and path != FEEDBACK_ROUTE:
             assert "requestBody" not in ops["post"], f"{path} must not accept a body"
+        if "delete" in ops:
+            assert "requestBody" not in ops["delete"], f"{path} must not accept a body"
     assert WRITE_ROUTES <= set(paths)
     # The one body is a verdict and a short note: it cannot name an action, a tool or an incident.
     ref = paths[FEEDBACK_ROUTE]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]

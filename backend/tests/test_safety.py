@@ -61,6 +61,9 @@ class DictRepository:
             raise IncidentNotFoundError("Incident not found.")
         return self._rows[incident_id][0]
 
+    def forget_owner(self, owner: str) -> None:
+        pass
+
     def get_applied_remediation(self, incident_id: str, owner: str = "anonymous") -> str | None:
         applied = self._rows[incident_id][1]
         return applied[-1] if applied else None

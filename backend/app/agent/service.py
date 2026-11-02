@@ -12,13 +12,21 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from app.agent.coordinator import FAILURE_MESSAGES, Coordinator, Limits
-from app.agent.models import Failure, Feedback, FeedbackRequest, Investigation, ProviderInfo, RemediationRecord
+from app.agent.models import (
+    Failure,
+    Feedback,
+    FeedbackRequest,
+    Investigation,
+    InvestigationSummary,
+    ProviderInfo,
+    RemediationRecord,
+)
 from app.agent.provider import LLMProvider
 from app.agent.store import InvestigationStore
 from app.agent.timeline import effective_status, events_for
 from app.agent.tools import ToolRunner
 from app.config import Settings
-from app.errors import AgentOpsError, FeedbackNotAllowedError, InvestigationNotFoundError, RemediationStateError
+from app.errors import AgentOpsError, FeedbackNotAllowedError, InvestigationInProgressError, RemediationStateError
 from app.identity import ANONYMOUS_OWNER
 from app.schemas import GetIncidentArgs, IncidentDetail, IncidentSummary, TimelineEvent
 from app.simulator.service import Simulator
@@ -97,12 +105,46 @@ class InvestigationService:
     def get(self, investigation_id: str) -> Investigation:
         return self._store.get(self._owner, investigation_id)
 
-    def latest(self, incident_id: str) -> Investigation:
+    def latest(self, incident_id: str) -> Investigation | None:
+        """This owner's newest investigation of the incident, or None if they have not run one (not an error)."""
         self._sim.get_incident(GetIncidentArgs(incident_id=incident_id))
-        found = self._store.latest_for(self._owner, incident_id)
-        if found is None:
-            raise InvestigationNotFoundError("No investigation has been run for this incident.")
-        return found
+        return self._store.latest_for(self._owner, incident_id)
+
+    # ---- "my investigations" -----------------------------------------------------------------
+
+    def mine(self) -> list[InvestigationSummary]:
+        """This owner's newest investigation of each incident they have investigated, newest first."""
+        rows: list[InvestigationSummary] = []
+        for incident in self._sim.list_incidents():
+            inv = self._store.latest_for(self._owner, incident.id)
+            if inv is None:
+                continue
+            state = inv.remediation_state
+            rows.append(
+                InvestigationSummary(
+                    id=inv.id,
+                    incident_id=incident.id,
+                    incident_title=incident.title,
+                    status=inv.status,
+                    started_at=inv.started_at,
+                    confidence=inv.findings.confidence if inv.findings else None,
+                    remediation_status=state.status if state else None,
+                    helpful=inv.feedback.helpful if inv.feedback else None,
+                )
+            )
+        return sorted(rows, key=lambda r: r.started_at, reverse=True)
+
+    def delete_mine(self) -> int:
+        """Delete everything this owner has recorded. Refused while one of their investigations is running."""
+        with self._approval_lock:  # nothing is being approved or rated while records disappear
+            incident_ids = [i.id for i in self._sim.list_incidents()]
+            for incident_id in incident_ids:
+                latest = self._store.latest_for(self._owner, incident_id)
+                if latest is not None and latest.status == "running":
+                    raise InvestigationInProgressError("Wait for the running investigation to finish, then delete.")
+            removed = self._store.delete_for_owner(self._owner, incident_ids)
+            self._sim.forget_owner(self._owner)
+            return removed
 
     # ---- incident views --------------------------------------------------------------------
 

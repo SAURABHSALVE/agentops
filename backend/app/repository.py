@@ -26,6 +26,10 @@ class IncidentRepository(Protocol):
         never changes what another user sees."""
         ...
 
+    def forget_owner(self, owner: str) -> None:
+        """Drop every remediation this owner applied (part of deleting their data)."""
+        ...
+
 
 class InMemoryIncidentRepository:
     """Process-local store seeded from the deterministic fixtures. Lost on restart."""
@@ -48,6 +52,11 @@ class InMemoryIncidentRepository:
     def get_applied_remediation(self, incident_id: str, owner: str = ANONYMOUS_OWNER) -> str | None:
         self.get_incident(incident_id)
         return self._applied.get((owner, incident_id))
+
+    def forget_owner(self, owner: str) -> None:
+        with self._lock:
+            for key in [k for k in self._applied if k[0] == owner]:
+                del self._applied[key]
 
     def record_remediation(self, incident_id: str, action_id: str, owner: str = ANONYMOUS_OWNER) -> bool:
         self.get_incident(incident_id)

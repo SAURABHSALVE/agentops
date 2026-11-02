@@ -148,6 +148,27 @@ class DynamoDbInvestigationStore:
         except InvestigationNotFoundError:
             return None  # the record aged out via TTL before its pointer did
 
+    def delete_for_owner(self, owner: str, incident_ids: list[str]) -> int:
+        """Delete the newest record of each incident, its pointer and its lock (item calls only: no Scan, no Query).
+
+        Older runs of the same incident have no pointer to find them by; they are unreachable through the newest
+        one and expire with the 7-day TTL.
+        """
+        removed = 0
+        for incident_id in incident_ids:
+            pointer_key = {"pk": f"LATEST#{owner}#{incident_id}"}
+            pointer = self._table.get_item(Key=pointer_key, ConsistentRead=True).get("Item")
+            if pointer is None:
+                continue
+            record_key = {"pk": f"INV#{pointer['investigation_id']}"}
+            item = self._table.get_item(Key=record_key, ConsistentRead=True).get("Item")
+            if item is not None and item.get("owner", ANONYMOUS_OWNER) == owner:
+                self._table.delete_item(Key=record_key)
+                removed += 1
+            self._table.delete_item(Key=pointer_key)
+            self._table.delete_item(Key={"pk": f"LOCK#{owner}#{incident_id}"})
+        return removed
+
     def list_for_incident(self, owner: str, incident_id: str) -> list[Investigation]:
         # The single-table design has no per-incident index, so the timeline shows the newest run only.
         latest = self.latest_for(owner, incident_id)

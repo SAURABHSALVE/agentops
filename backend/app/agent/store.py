@@ -33,6 +33,13 @@ class InvestigationStore(Protocol):
         """Oldest first. Used to build the audit timeline."""
         ...
 
+    def delete_for_owner(self, owner: str, incident_ids: list[str]) -> int:
+        """Remove the owner's records and return how many investigations went. Never touches anyone else's.
+
+        `incident_ids` lets a store without a per-owner index (DynamoDB) find the records through their pointers.
+        """
+        ...
+
 
 class InMemoryInvestigationStore:
     def __init__(self) -> None:
@@ -82,3 +89,10 @@ class InMemoryInvestigationStore:
     def list_for_incident(self, owner: str, incident_id: str) -> list[Investigation]:
         with self._lock:
             return [r for o, r in self._rows.values() if o == owner and r.incident_id == incident_id]
+
+    def delete_for_owner(self, owner: str, incident_ids: list[str]) -> int:
+        with self._lock:
+            mine = [k for k, (o, _) in self._rows.items() if o == owner]
+            for k in mine:
+                del self._rows[k]
+            return len(mine)
