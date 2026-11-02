@@ -29,7 +29,7 @@ def test_reads_stay_open_but_writes_need_the_code(sim: Simulator) -> None:
     assert r.status_code == 401 and r.json() == {
         "error": {"code": "unauthorized", "message": "A valid access code is required for this action."}
     }
-    assert c.get("/api/incidents/INC-1001/investigations/latest").status_code == 404  # nothing was started
+    assert c.get("/api/incidents/INC-1001/investigations/latest").json() is None  # nothing was started
 
 
 @pytest.mark.parametrize("wrong", ["", "x", CODE.upper(), CODE + " ", "demo-code-123"])
@@ -120,7 +120,7 @@ def test_api_returns_429_with_retry_after_and_creates_no_record(sim: Simulator) 
     r = c.post("/api/incidents/INC-1003/investigations")
     assert r.status_code == 429 and r.json()["error"]["code"] == "rate_limited"
     assert int(r.headers["retry-after"]) >= 1
-    assert c.get("/api/incidents/INC-1003/investigations/latest").status_code == 404  # nothing left 'running'
+    assert c.get("/api/incidents/INC-1003/investigations/latest").json() is None  # nothing left 'running'
 
 
 def test_a_rejected_unauthenticated_request_does_not_use_the_rate_limit(sim: Simulator) -> None:
@@ -203,6 +203,6 @@ def test_every_write_route_is_behind_the_access_gate() -> None:
         for r in router.routes
         if isinstance(r, APIRoute) and (r.methods or set()) & {"POST", "PUT", "PATCH", "DELETE"}
     ]
-    assert len(writes) == 4  # start, approve, reject, feedback
+    assert len(writes) == 5  # start, approve, reject, feedback, delete my investigations
     for route in writes:
         assert any(d.call is require_access for d in route.dependant.dependencies), route.path

@@ -9,6 +9,8 @@
 // Env: CHROME (browser path), UI (default http://localhost:3000), SHOTS (directory for screenshots).
 // CAPTURED=1 expects the API to serve the captured lab dataset (see docs/REAL_TELEMETRY.md).
 // --live expects the API to run with AGENT_PROVIDER=openai and only checks properties that hold for a real model.
+// STACK=1 (with none of the modes below, or with GATED=<code> / CAPTURED=1) starts its own API and serves the production
+// build in frontend/out on one origin with sign-in off, instead of using a dev server you started: nothing else to run.
 // AUTH=1 checks sign-in end to end against a fake Cognito, starting its own API and serving frontend/out
 // (run `npm run build` in frontend/ first); it needs nothing else running. See scripts/e2e-auth-harness.mjs.
 
@@ -60,6 +62,8 @@ async function launch() {
   throw new Error("Browser did not start.");
 }
 
+const browserProblems = []; // script errors and console errors the pages raised (for the AUTH run)
+
 function connect(wsUrl) {
   const ws = new WebSocket(wsUrl);
   let id = 0;
@@ -70,6 +74,10 @@ function connect(wsUrl) {
       const { resolve, reject } = pending.get(msg.id);
       pending.delete(msg.id);
       msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
+    } else if (msg.method === "Runtime.exceptionThrown") {
+      browserProblems.push(`exception: ${msg.params.exceptionDetails.exception?.description ?? msg.params.exceptionDetails.text}`);
+    } else if (msg.method === "Log.entryAdded" && msg.params.entry.level === "error") {
+      browserProblems.push(`log: ${msg.params.entry.text} ${msg.params.entry.url ?? ""}`);
     }
   };
   const opened = new Promise((r) => (ws.onopen = r));
@@ -86,6 +94,8 @@ const { proc, dir, wsUrl } = await launch();
 const cdp = connect(wsUrl);
 await cdp.opened;
 await cdp.send("Page.enable");
+await cdp.send("Runtime.enable");
+await cdp.send("Log.enable");
 
 const evaluate = async (expr) => {
   const r = await cdp.send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
@@ -112,6 +122,16 @@ async function shot(name) {
   mkdirSync(SHOTS, { recursive: true });
   const { data } = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
   writeFileSync(join(SHOTS, `${name}.png`), Buffer.from(data, "base64"));
+}
+
+let stack = null;
+if (process.env.STACK && !process.env.AUTH) {
+  const { startHarness } = await import("./e2e-auth-harness.mjs");
+  const backendEnv = {};
+  if (process.env.GATED) backendEnv.ACCESS_CODE = process.env.GATED;
+  if (process.env.CAPTURED) backendEnv.TELEMETRY_DATASET = join(import.meta.dirname, "..", "backend", "data", "captured", "lab-capture.json");
+  stack = await startHarness({ auth: false, backendEnv });
+  UI = stack.siteUrl;
 }
 
 try {
@@ -154,6 +174,14 @@ try {
       await waitText("Showing 6 of 6 incidents");
       check("the list shows INC-1001 resolved for alice", /INC-1001[\s\S]{0,200}Resolved/i.test(await text()));
 
+      // ---- "my investigations" ------------------------------------------------------------------
+      check("the header links to My investigations", (await text()).includes("My investigations"));
+      await goto("/");
+      check("home says how many investigations alice has", await waitText("You have 1 investigation", 20000));
+      await goto("/investigations/");
+      check("My investigations lists alice's run and what happened to the fix", (await waitText("Fix approved, and the incident is resolved", 20000)) && (await text()).includes("INC-1001") && (await text()).includes("Confidence: high"));
+      await shot("auth-my-investigations");
+
       // ---- signing out hides it again ----------------------------------------------------------
       check("sign out works", await clickButton("Sign out"));
       check("back at the dashboard, signed out", (await waitText("Showing 6 of 6 incidents", 20000)) && !(await text()).includes(USERS.alice.email));
@@ -161,16 +189,56 @@ try {
       check("a signed-out visitor sees none of alice's investigation", (await waitText("No investigation has been run", 20000)) && !(await text()).includes("Passed: incident resolved"));
       check("...and INC-1001 is not resolved for a visitor", !/Resolved/.test((await text()).split("Investigation")[0]));
 
+      await goto("/investigations/");
+      check("a visitor is asked to sign in to see investigations", await waitText("Sign in to see your investigations", 15000));
+
       // ---- bob is a different person -----------------------------------------------------------
       h.state.user = USERS.bob;
       await clickButton("Sign in");
       check("bob signs in", await waitText(USERS.bob.email, 20000));
+      await goto("/");
+      check("a brand-new account is welcomed and pointed at a first incident", (await waitText("Welcome!", 15000)) && (await text()).includes("Start with INC-1001"));
+      await shot("auth-welcome");
+      await goto("/incidents/INC-1001/");
       check("bob does not see alice's investigation", (await waitText("No investigation has been run", 20000)) && !(await text()).includes("Passed: incident resolved"));
       check("INC-1001 is open for bob", !/Resolved/.test((await text()).split("Investigation")[0]));
       await clickButton("Investigate");
       check("bob's own investigation finishes", await waitText("Finished after", 90000));
       check("bob's approval really runs (alice's did not do it for him)", (await clickButton("Approve simulated action")) && (await waitText("Passed: incident resolved", 20000)));
       await shot("auth-bob-resolved");
+      await goto("/investigations/");
+      check("bob's list holds exactly his own run", (await waitText("Fix approved, and the incident is resolved", 20000)) && (await evaluate(`document.querySelectorAll('ul[aria-label="Your investigations"] li').length`)) === 1);
+      await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+      await goto("/investigations/");
+      await waitText("Fix approved, and the incident is resolved", 20000);
+      const wide = await evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth");
+      check("phone: My investigations does not scroll sideways", wide <= 1, `(${wide}px too wide)`);
+      await shot("auth-my-investigations-phone");
+      await cdp.send("Emulation.clearDeviceMetricsOverride");
+
+      // alice comes back and deletes hers; bob's must survive
+      check("bob signs out", await clickButton("Sign out"));
+      await waitText("Showing 6 of 6 incidents", 20000);
+      h.state.user = USERS.alice;
+      await clickButton("Sign in");
+      check("alice signs in again", await waitText(USERS.alice.email, 20000));
+      await goto("/investigations/");
+      check("alice still has her run", await waitText("Fix approved, and the incident is resolved", 20000));
+      check("deleting asks first", (await clickButton("Delete…")) && (await waitText("This cannot be undone", 10000)));
+      check("cancel keeps everything", (await clickButton("Cancel")) && (await text()).includes("Fix approved, and the incident is resolved"));
+      await clickButton("Delete…");
+      await waitText("This cannot be undone", 10000);
+      check("confirming deletes", (await clickButton("Yes, delete")) && (await waitText("Deleted 1 investigation", 20000)));
+      check("her list is now empty", await waitText("You have not run an investigation yet", 20000));
+      await goto("/incidents/INC-1001/");
+      check("and the incident shows nothing of hers", (await waitText("No investigation has been run", 20000)) && !(await text()).includes("Passed: incident resolved"));
+      await clickButton("Sign out");
+      await waitText("Showing 6 of 6 incidents", 20000);
+      h.state.user = USERS.bob;
+      await clickButton("Sign in");
+      await waitText(USERS.bob.email, 20000);
+      await goto("/investigations/");
+      check("bob's investigation survived alice's deletion", await waitText("Fix approved, and the incident is resolved", 20000));
 
       // ---- a token the server will not accept -------------------------------------------------
       await evaluate(`(() => { const s = JSON.parse(sessionStorage.getItem("agentops-session")); s.accessToken = "forged.token.value"; sessionStorage.setItem("agentops-session", JSON.stringify(s)); })()`);
@@ -189,6 +257,10 @@ try {
       check("a callback without a matching state is refused", await waitText("not valid or was already used"));
       check("no session came out of it", !(await text()).includes("@example.com"));
       await shot("auth-callback-refused");
+
+      // ---- the Content-Security-Policy the real site sends did not block anything the pages need ------------
+      const blocked = browserProblems.filter((p) => /Content Security Policy|Refused to|^exception/i.test(p));
+      check("no page raised a script error or broke the Content-Security-Policy", blocked.length === 0, blocked.slice(0, 3).join(" | "));
     } finally {
       await h.stop();
     }
@@ -352,6 +424,7 @@ try {
     failures++;
   }
 } finally {
+  if (stack) await stack.stop();
   cdp.close();
   proc.kill();
   await sleep(500);

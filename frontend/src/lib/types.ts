@@ -64,6 +64,8 @@ export interface Findings {
   root_cause_hypothesis: string;
   confidence: Confidence;
   confidence_rationale: string;
+  /** Set when the backend lowered the confidence the agent claimed, because the evidence it gathered did not support it. */
+  confidence_lowered_from?: Confidence | null;
   evidence: EvidenceItem[];
   alternative_hypotheses: string[];
   recommended_next_step: string;
@@ -126,4 +128,16 @@ export interface Investigation {
   usage: { rounds: number; tool_calls: number; input_tokens: number; output_tokens: number };
   feedback: Feedback | null;
   simulated: true;
+}
+
+/** One row of "my investigations": the newest run of an incident the signed-in user has investigated. */
+export interface InvestigationSummary {
+  id: string;
+  incident_id: string;
+  incident_title: string;
+  status: InvestigationStatus;
+  started_at: string;
+  confidence: Confidence | null;
+  remediation_status: RemediationStatus | null;
+  helpful: boolean | null;
 }

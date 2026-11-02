@@ -6,6 +6,7 @@ from aws_cdk import Duration, Stack, Tags
 from aws_cdk import aws_budgets as budgets
 from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_cloudwatch_actions as cw_actions
+from aws_cdk import aws_logs as logs
 from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sns_subscriptions as subs
 from constructs import Construct
@@ -51,6 +52,25 @@ class MonitoringStack(Stack):
                 int(LAMBDA_TIMEOUT.to_milliseconds() * 0.8),
             ),
         }
+        if cfg.sign_in:
+            # Every refused token is one log line ("token refused: <reason>"). A handful is normal (an expired tab);
+            # a burst means someone is probing with forged or stolen tokens, or a pool mismatch is locking people out.
+            namespace = f"AgentOps/{cfg.stage}"
+            logs.MetricFilter(
+                self,
+                "TokenRefusals",
+                log_group=backend.log_group,
+                filter_pattern=logs.FilterPattern.literal('"token refused"'),
+                metric_namespace=namespace,
+                metric_name="TokenRefused",
+                metric_value="1",
+                default_value=0,
+            )
+            alarms["TokenRefusalsSpike"] = (
+                "Many sign-in tokens were refused in five minutes: probing, or a pool mismatch locking people out.",
+                cloudwatch.Metric(namespace=namespace, metric_name="TokenRefused", period=_PERIOD, statistic="Sum"),
+                50,
+            )
         for name, (description, metric, threshold) in alarms.items():
             alarm = cloudwatch.Alarm(
                 self,

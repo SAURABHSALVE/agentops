@@ -33,7 +33,11 @@ if [ "$auth_mode" = "cognito" ]; then
     fail "a write without signing in should be 401 sign_in_required, got $code"
   fi
   code="$(status_of "$base/api/incidents/INC-1001/investigations/latest")"
-  [ "$code" = "404" ] || fail "a visitor should see no investigation (404), got $code"
+  if [ "$code" != "200" ] || [ "$(tr -d '[:space:]' < "$body")" != "null" ]; then
+    fail "a visitor has no investigation yet: expected 200 null, got $code"
+  fi
+  code="$(status_of "$base/api/me/investigations")"
+  [ "$code" = "401" ] || fail "my investigations should need sign-in (401), got $code"
 
   cfg="$(curl "${retry[@]}" "$base/auth-config.json")"
   hosted="$(printf '%s' "$cfg" | python3 -c 'import json,sys; c=json.load(sys.stdin); assert c["clientId"] and c["userPoolId"] and c["region"]; print(c["hostedUiUrl"])')" \

@@ -1,7 +1,7 @@
 // Plain-English wording for things the API reports as codes. Display only: nothing here changes what the
 // backend decides, and an unknown code falls back to a generic sentence instead of throwing.
 
-import type { Confidence, ToolCallRecord } from "./types";
+import type { Confidence, InvestigationSummary, ToolCallRecord } from "./types";
 
 export const CONFIDENCE_MEANING: Record<Confidence, string> = {
   high: "Strong evidence points to one cause. Still worth a quick look before you act.",
@@ -84,6 +84,35 @@ const ERROR_HELP: Record<string, string> = {
 /** Turn an API error into advice a non-engineer can act on. Falls back to the server's own message. */
 export function friendlyError(code: string, fallback: string): string {
   return ERROR_HELP[code] ?? fallback;
+}
+
+/** What happened to the fix, in the words a person would use. Used on "My investigations". */
+export function outcomeText(row: Pick<InvestigationSummary, "status" | "remediation_status">): {
+  text: string;
+  tone: "ok" | "bad" | "plain";
+} {
+  if (row.status === "running") return { text: "Still running", tone: "plain" };
+  if (row.status === "failed") return { text: "Stopped before it had an answer", tone: "bad" };
+  switch (row.remediation_status) {
+    case null:
+      return { text: "No fix proposed", tone: "plain" };
+    case "proposed":
+      return { text: "A fix is suggested and waiting for your decision", tone: "plain" };
+    case "rejected":
+      return { text: "You rejected the suggested fix", tone: "plain" };
+    case "executing":
+      return { text: "The approved fix is running", tone: "plain" };
+    case "action_failed":
+      return { text: "You approved a fix but it could not run", tone: "bad" };
+    case "resolved":
+      return { text: "Fix approved, and the incident is resolved", tone: "ok" };
+    case "not_resolved":
+      return { text: "Fix approved, but the incident is NOT resolved", tone: "bad" };
+    case "not_verifiable":
+      return { text: "Fix approved; this incident has no check to confirm it", tone: "plain" };
+    default:
+      return { text: "Finished", tone: "plain" };
+  }
 }
 
 /** One line per demo incident: what you will see. Keys must be ids the backend serves. */

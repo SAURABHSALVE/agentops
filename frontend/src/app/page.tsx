@@ -1,5 +1,6 @@
 import { DemoLink } from "@/components/DemoLink";
 import { IncidentDashboard } from "@/components/IncidentDashboard";
+import { Welcome } from "@/components/Welcome";
 
 const STEPS = [
   {
@@ -38,6 +39,8 @@ export default function DashboardPage() {
           approval.
         </p>
       </section>
+
+      <Welcome />
 
       <section aria-labelledby="how-heading">
         <h2 id="how-heading" className="text-sm font-semibold uppercase tracking-wide text-muted">

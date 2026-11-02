@@ -59,7 +59,7 @@ def test_latest_returns_the_newest_investigation_and_reruns_are_allowed_after_co
 
 def test_latest_is_404_before_any_investigation(client: TestClient) -> None:
     r = client.get("/api/incidents/INC-1001/investigations/latest")
-    assert r.status_code == 404 and r.json()["error"]["code"] == "investigation_not_found"
+    assert r.status_code == 200 and r.json() is None  # nothing yet is a normal answer, not an error
 
 
 def test_unknown_or_malformed_ids_are_rejected(client: TestClient) -> None:

@@ -1,5 +1,5 @@
 import { clearSession, getSession } from "./auth";
-import type { Incident, IncidentSummary, Investigation, TimelineEvent } from "./types";
+import type { Incident, IncidentSummary, Investigation, InvestigationSummary, TimelineEvent } from "./types";
 
 // Local development talks to the API on :8000. The deployed static site shares an origin with the API
 // (CloudFront routes /api/* to it), so the base is empty there. Public config only: never a secret.
@@ -52,7 +52,7 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
   const token = getSession()?.accessToken;
   try {
     const headers: Record<string, string> = { Accept: "application/json", ...(init?.headers as Record<string, string>) };
-    const code = init?.method === "POST" ? getAccessCode() : "";
+    const code = init?.method === "POST" || init?.method === "DELETE" ? getAccessCode() : "";
     if (code) headers["X-Access-Code"] = code;
     if (token) headers["Authorization"] = `Bearer ${token}`;
     res = await fetch(`${API_BASE}${path}`, { ...init, headers });
@@ -93,18 +93,11 @@ export const api = {
   getIncident: (id: string, signal?: AbortSignal) => request<Incident>(`/api/incidents/${enc(id)}`, { signal }),
   getTimeline: (id: string, signal?: AbortSignal) =>
     request<TimelineEvent[]>(`/api/incidents/${enc(id)}/timeline`, { signal }),
-  /** A 404 here means "you have not investigated this yet". CloudFront answers every 404, the API's included, with
-   *  the site's HTML 404 page, so the error code in the body cannot be relied on: go by the status. */
-  latestInvestigation: async (id: string, signal?: AbortSignal) => {
-    try {
-      return await request<Investigation>(`/api/incidents/${enc(id)}/investigations/latest`, { signal });
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) {
-        throw new ApiError("No investigation has been run for this incident.", 404, "investigation_not_found");
-      }
-      throw e;
-    }
-  },
+  /** `null` when you have not investigated this incident yet (a normal answer, not an error). */
+  latestInvestigation: (id: string, signal?: AbortSignal) =>
+    request<Investigation | null>(`/api/incidents/${enc(id)}/investigations/latest`, { signal }),
+  myInvestigations: (signal?: AbortSignal) => request<InvestigationSummary[]>("/api/me/investigations", { signal }),
+  deleteMyInvestigations: () => request<{ deleted: number }>("/api/me/investigations", { method: "DELETE" }),
   getInvestigation: (id: string, signal?: AbortSignal) =>
     request<Investigation>(`/api/investigations/${enc(id)}`, { signal }),
   startInvestigation: (incidentId: string) =>

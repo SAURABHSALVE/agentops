@@ -348,9 +348,29 @@ Check it in a real browser with no AWS: `npm run build` in `frontend/`, then `AU
 fake Cognito, the real backend and the production build on one origin, and checks sign-in, privacy between two users,
 sign-out, a forged token and refused callbacks.
 
+**What you get once signed in** (Phase 13): a *My investigations* page (the newest run of each incident you looked into, what
+happened to the fix, delete everything with a confirmation), a first-run card pointing at a good starting incident, and
+guidance about the emailed code. Phase 14: a separate investigation cap per user (5 a minute, 40 an hour in AWS), a
+Content-Security-Policy, and an alarm on a burst of refused tokens.
+
 **Honest limits:** sign-up is open, so anyone with an email can create an account (Cognito's own email sender allows about
-50 verification emails a day, which is also a natural brake). There is no admin UI, no password-reset page of our own (the
-hosted page has one), and the per-process rate limiter is still shared, not per user. The token sits in `sessionStorage`,
-which script on the page could read; there is no Content-Security-Policy yet. The hosted page is Cognito's classic one,
+50 verification emails a day, which is also a natural brake). There is no admin UI and no password-reset page of our own (the
+hosted page has one). Per-user caps are per Lambda container, like the shared one. The token sits in `sessionStorage`; the
+Content-Security-Policy stops it being sent anywhere else but cannot stop script that is already running on the page (inline
+script is allowed because the static export needs it). "Delete my investigations" keeps your sign-in account; on DynamoDB, older
+superseded runs have no pointer to find them by and simply expire with the 7-day TTL. The hosted page is Cognito's classic one,
 not the newer managed-login branding. A complete sign-up and sign-in with a real email has not been exercised yet;
 the smoke test (`scripts/smoke_test.sh`) cannot sign in from CI, so it checks everything short of that.
+
+## Confidence is capped by the evidence (Phase 15)
+
+Whatever a model claims, the backend caps confidence by what the run actually retrieved
+(`backend/app/agent/calibration.py`): above *low* needs a metric elevated for at least half the incident window, and *high*
+also needs the deployment history checked with no recent runtime change. It only lowers, says so on screen, and withholds a
+fix whose confidence falls to low. Measured with the live model, results and caveats in
+[docs/EVALUATION.md](docs/EVALUATION.md) Section 7.
+
+### Turning the live AI on
+It is off in AWS (offline mock). To enable it you provide your own OpenAI key and spend limit; I never handle the key. The
+ordered steps (spend limit, store the key in Secrets Manager yourself, set the `AGENT_PROVIDER` repository variable, run the
+deploy manually with the IAM box ticked) are in [docs/RUNBOOK.md](docs/RUNBOOK.md), "The live AI".

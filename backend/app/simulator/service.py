@@ -133,6 +133,10 @@ class Simulator:
             summary=spec.description if newly_applied else "Action was already applied; nothing re-run.",
         )
 
+    def forget_owner(self, owner: str) -> None:
+        """Forget every simulated action this owner applied."""
+        self._repo.forget_owner(owner)
+
     def verify_resolution(self, incident_id: str, owner: str = ANONYMOUS_OWNER) -> VerificationResult:
         """Check simulated metrics against thresholds. This is separate from action success:
         an action can succeed while verification still fails."""

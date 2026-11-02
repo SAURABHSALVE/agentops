@@ -114,6 +114,23 @@ def test_the_anonymous_owner_is_just_another_owner(store: InvestigationStore) ->
     assert store.latest_for(USER_A, "INC-1001") is None
 
 
+def test_deleting_an_owners_records_leaves_everyone_elses_and_frees_their_locks(store: InvestigationStore) -> None:
+    done = store.create(USER_A, "INC-1001", INFO, NOW)
+    store.save(USER_A, done.model_copy(update={"status": "completed", "finished_at": NOW}))
+    running = store.create(USER_A, "INC-1002", INFO, NOW)
+    theirs = store.create(USER_B, "INC-1001", INFO, NOW)
+
+    assert store.delete_for_owner(USER_A, ["INC-1001", "INC-1002"]) == 2
+    for gone in (done, running):
+        with pytest.raises(InvestigationNotFoundError):
+            store.get(USER_A, gone.id)
+    assert store.latest_for(USER_A, "INC-1001") is None and store.list_for_incident(USER_A, "INC-1002") == []
+    assert store.get(USER_B, theirs.id) == theirs  # untouched
+    assert store.create(USER_A, "INC-1002", INFO, NOW).id != running.id  # A's lock went with A's record
+    with pytest.raises(InvestigationInProgressError):
+        store.create(USER_B, "INC-1001", INFO, NOW)  # B's lock is still B's
+
+
 # ---- records written before owners existed ---------------------------------------------------
 
 

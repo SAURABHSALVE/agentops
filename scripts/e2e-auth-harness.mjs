@@ -29,6 +29,22 @@ export const USERS = {
   bob: { sub: "22222222-2222-4222-8222-222222222222", email: "bob@example.com" },
 };
 
+// The same directives as infra/agentops_infra/csp.py (a test compares them), with the fake Cognito as the one extra
+// place the page may connect to. The browser test fails on any violation, so a policy that would break the real
+// site is caught here.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self' data:",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+  `connect-src 'self' http://localhost:${ISSUER_PORT}`,
+].join("; ");
+
 const b64 = (buf) => Buffer.from(buf).toString("base64url");
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json",
   ".txt": "text/plain", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2" }; // fmt: skip
@@ -137,7 +153,7 @@ function site(authConfig) {
           // CloudFront's distribution-wide custom error response: any 404, from the API too, is answered with the
           // site's 404 page. The status survives; the JSON error body does not. The real site behaves this way.
           const page = join(out, "404.html");
-          res.writeHead(404, { "Content-Type": "text/html" }).end(existsSync(page) ? readFileSync(page) : "not found");
+          res.writeHead(404, { "Content-Type": "text/html", "Content-Security-Policy": CSP }).end(existsSync(page) ? readFileSync(page) : "not found");
           return;
         }
         res.writeHead(upstream.status, back).end(payload);
@@ -146,8 +162,8 @@ function site(authConfig) {
       }
       return;
     }
-    if (url.pathname === "/auth-config.json") {
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(authConfig));
+    if (url.pathname === "/auth-config.json" && authConfig) {
+      res.writeHead(200, { "Content-Type": "application/json", "Content-Security-Policy": CSP }).end(JSON.stringify(authConfig));
       return;
     }
     let path = decodeURIComponent(url.pathname);
@@ -156,14 +172,15 @@ function site(authConfig) {
     const file = normalize(join(out, path));
     if (!file.startsWith(out) || !existsSync(file) || !statSync(file).isFile()) {
       const notFound = join(out, "404.html");
-      res.writeHead(404, { "Content-Type": "text/html" }).end(existsSync(notFound) ? readFileSync(notFound) : "not found");
+      res.writeHead(404, { "Content-Type": "text/html", "Content-Security-Policy": CSP }).end(existsSync(notFound) ? readFileSync(notFound) : "not found");
       return;
     }
-    res.writeHead(200, { "Content-Type": MIME[extname(file)] ?? "application/octet-stream", "Cache-Control": "no-store" }).end(readFileSync(file));
+    res.writeHead(200, { "Content-Type": MIME[extname(file)] ?? "application/octet-stream", "Cache-Control": "no-store", "Content-Security-Policy": CSP }).end(readFileSync(file));
   });
 }
 
-export async function startHarness() {
+/** `auth: false` starts the same stack without sign-in (what STACK=1 uses); `backendEnv` adds settings to the API. */
+export async function startHarness({ auth = true, backendEnv = {} } = {}) {
   if (!existsSync(join(ROOT, "frontend", "out", "index.html"))) {
     throw new Error("frontend/out is missing: run `npm run build` in frontend/ first.");
   }
@@ -188,8 +205,9 @@ export async function startHarness() {
         TELEMETRY_DATASET: "",
         ACCESS_CODE: "",
         ACCESS_SECRET_ARN: "",
-        COGNITO_USER_POOL_ID: POOL_ID,
-        COGNITO_ISSUER: `http://localhost:${ISSUER_PORT}/pool`,
+        COGNITO_USER_POOL_ID: auth ? POOL_ID : "",
+        COGNITO_ISSUER: auth ? `http://localhost:${ISSUER_PORT}/pool` : "",
+        ...backendEnv,
       },
     },
   );
@@ -203,12 +221,11 @@ export async function startHarness() {
     await new Promise((r) => setTimeout(r, 200));
   }
 
-  const web = site({
-    region: "us-east-1",
-    userPoolId: POOL_ID,
-    clientId: CLIENT_ID,
-    hostedUiUrl: `http://localhost:${ISSUER_PORT}`,
-  });
+  const web = site(
+    auth
+      ? { region: "us-east-1", userPoolId: POOL_ID, clientId: CLIENT_ID, hostedUiUrl: `http://localhost:${ISSUER_PORT}` }
+      : null,
+  );
   await listen(web, SITE_PORT);
 
   return {

@@ -14,6 +14,7 @@ from constructs import Construct
 from agentops_infra.auth_stack import AuthStack
 from agentops_infra.backend_stack import BackendStack
 from agentops_infra.config import StageConfig
+from agentops_infra.csp import content_security_policy
 
 # Next's static export writes /incidents/INC-1001/index.html; S3 has no notion of a directory index.
 _REWRITE = """\
@@ -68,6 +69,10 @@ class FrontendStack(Stack):
             self,
             "SecurityHeaders",
             security_headers_behavior=cloudfront.ResponseSecurityHeadersBehavior(
+                content_security_policy=cloudfront.ResponseHeadersContentSecurityPolicy(
+                    content_security_policy=content_security_policy(auth.hosted_ui_url if auth else None),
+                    override=True,
+                ),
                 content_type_options=cloudfront.ResponseHeadersContentTypeOptions(override=True),
                 frame_options=cloudfront.ResponseHeadersFrameOptions(
                     frame_option=cloudfront.HeadersFrameOption.DENY, override=True

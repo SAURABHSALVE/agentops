@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useAuth } from "@/lib/use-auth";
 
 /** Sign in / sign out, shown only when the API requires sign-in. */
@@ -13,7 +14,10 @@ export function AccountMenu() {
 
   if (auth.status === "signed_in") {
     return (
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Link href="/investigations" className="text-sm underline hover:text-foreground">
+          My investigations
+        </Link>
         <span className="max-w-[16rem] truncate text-muted" title={auth.email ?? undefined}>
           {auth.email ?? "Signed in"}
         </span>

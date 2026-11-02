@@ -196,11 +196,15 @@ def test_remediation_with_low_confidence_is_rejected(sim: Simulator) -> None:
 
 
 def test_allowed_remediation_is_filled_from_the_server_allowlist_not_model_text(sim: Simulator) -> None:
+    # High confidence needs a sustained metric and the deployment history, or the backend lowers it (test_calibration).
     done = run(
         sim,
-        *gather_then(
-            final(confidence="high", evidence=[LOG_EVIDENCE], remediation_action_id="simulate_clear_dependency_fault")
+        calls(
+            call("search_logs", {"query": "timeout", "limit": 5}),
+            call("get_service_metrics", {"metric": "error_rate"}, "c2"),
+            call("get_recent_deployments", {}, "c3"),
         ),
+        final(confidence="high", evidence=[LOG_EVIDENCE], remediation_action_id="simulate_clear_dependency_fault"),
     )
     rem = done.findings.remediation if done.findings else None
     assert rem is not None and rem.requires_approval is True

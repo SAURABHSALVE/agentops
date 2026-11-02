@@ -31,6 +31,9 @@ class BackendStack(Stack):
             "DYNAMODB_TABLE": data.table.table_name,
             "AGENT_PROVIDER": "mock",
             "STAGE": cfg.stage,
+            # One person's share. Per Lambda container, like the other backstops, so not a global cap.
+            "USER_INVESTIGATIONS_PER_MINUTE": "5",
+            "USER_INVESTIGATIONS_PER_HOUR": "40",
         }
         if cfg.live and data.access_code is not None:
             env.update(
@@ -44,6 +47,8 @@ class BackendStack(Stack):
                     # Backstops behind the API throttle; per Lambda container, so they are not a global cap.
                     "INVESTIGATIONS_PER_MINUTE": "6",
                     "INVESTIGATIONS_PER_HOUR": "60",
+                    "USER_INVESTIGATIONS_PER_MINUTE": "3",  # a real model costs money: one person gets less
+                    "USER_INVESTIGATIONS_PER_HOUR": "20",
                 }
             )
         if auth is not None:
@@ -70,6 +75,7 @@ class BackendStack(Stack):
             retention=logs.RetentionDays.ONE_MONTH if cfg.is_prod else logs.RetentionDays.ONE_WEEK,
             removal_policy=RemovalPolicy.DESTROY,
         )
+        self.log_group = log_group
         self.function = lambda_.Function(
             self,
             "Api",

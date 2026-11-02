@@ -83,6 +83,9 @@ class Findings(_Model):
     root_cause_hypothesis: str
     confidence: Confidence
     confidence_rationale: str
+    # Set when the backend lowered what the provider claimed, because the evidence retrieved in this run did not
+    # support it (app/agent/calibration.py). The reason is appended to confidence_rationale.
+    confidence_lowered_from: Confidence | None = None
     evidence: list[EvidenceItem]
     alternative_hypotheses: list[str]
     recommended_next_step: str
@@ -173,3 +176,16 @@ class Investigation(_Model):
     usage: Usage = Usage()
     feedback: Feedback | None = None
     simulated: Literal[True] = True
+
+
+class InvestigationSummary(_Model):
+    """One row of "my investigations": enough to list it and link back to the incident, nothing more."""
+
+    id: InvestigationId
+    incident_id: IncidentId
+    incident_title: str
+    status: InvestigationStatus
+    started_at: AwareDatetime
+    confidence: Confidence | None = None
+    remediation_status: RemediationStatus | None = None
+    helpful: bool | None = None

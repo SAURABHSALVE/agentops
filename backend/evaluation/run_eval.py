@@ -43,6 +43,10 @@ def score(inv: dict, iid: str) -> dict[str, bool]:
     out["cites_real_failure_log"] = bool(refs & gt.expected_log_ids) if gt.expected_log_ids else not log_lines
     out["cites_expected_metric"] = any(r.startswith("metric:") for r in refs)
     out["confidence_within_cap"] = RANK[f["confidence"]] <= RANK[gt.max_confidence]
+    # What the provider itself claimed, before the backend's evidence ceiling (app/agent/calibration.py) lowered it.
+    claimed = f.get("confidence_lowered_from") or f["confidence"]
+    out["claimed_within_cap"] = RANK[claimed] <= RANK[gt.max_confidence]
+    out["guard_lowered"] = f.get("confidence_lowered_from") is not None  # a count of interventions, not a quality score
     out["right_remediation"] = rem == gt.expected_remediation
     if iid == "INC-1005":
         text = json.dumps(f).lower()

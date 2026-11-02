@@ -59,7 +59,7 @@ def test_a_visitor_who_is_not_signed_in_can_still_read_the_shared_incidents(app_
     assert app_client.get("/api/incidents").status_code == 200
     assert app_client.get("/api/incidents/INC-1001").status_code == 200
     assert app_client.get("/api/incidents/INC-1001/logs", params={"query": "timeout"}).status_code == 200
-    assert app_client.get("/api/incidents/INC-1001/investigations/latest").status_code == 404
+    assert app_client.get("/api/incidents/INC-1001/investigations/latest").json() is None
     assert app_client.get("/api/incidents/INC-1001/timeline").status_code == 200
 
 
@@ -102,7 +102,7 @@ def test_a_user_sees_only_their_own_investigation(app_client: TestClient, pool: 
     assert mine.status_code == 200 and mine.json()["id"] == a["id"]
 
     theirs = app_client.get("/api/incidents/INC-1001/investigations/latest", headers=_headers(pool, USER_B))
-    assert theirs.status_code == 404
+    assert theirs.status_code == 200 and theirs.json() is None  # nothing of theirs, and nothing of A's
     assert app_client.get(f"/api/investigations/{a['id']}", headers=_headers(pool, USER_B)).status_code == 404
     assert app_client.get(f"/api/investigations/{a['id']}").status_code == 404  # signed out
 
@@ -220,6 +220,7 @@ def test_every_route_that_reads_investigations_is_scoped_to_the_caller() -> None
         "/api/incidents/{incident_id}/timeline",
         "/api/incidents/{incident_id}/investigations/latest",
         "/api/investigations/{investigation_id}",
+        "/api/me/investigations",
     }
     seen = set()
     for r in router.routes:

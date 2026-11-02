@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.agent.calibration import CAUSE_WINDOW_MINUTES, SUSTAINED_FRACTION
 from app.agent.models import ProviderInfo, TokenUsage
 from app.agent.prompts import decode_tool_result
 from app.agent.provider import CompletionRequest, CompletionResponse, Message, ToolCallRequest
@@ -28,8 +29,6 @@ _SIGNAL_METRICS: tuple[tuple[str, str], ...] = (
 # Log probes run in parallel on the first investigation round: (query, level).
 _PROBES: tuple[tuple[str, str], ...] = (("timeout", "ERROR"), ("slow query", "WARN"), ("503", "ERROR"))
 _SWEEPS: tuple[tuple[str, str], ...] = (("e", "ERROR"), ("e", "WARN"))  # broad, used when probes find nothing
-
-CAUSE_WINDOW_MINUTES = 60  # a code/config/dependency change this close before onset is a candidate cause
 
 
 @dataclass(frozen=True)
@@ -138,7 +137,7 @@ class MockProvider:
             if len({e["id"] for e, _ in hits}) >= 3 and (best is None or len(hits) > len(best[1])):
                 best = (sig, [e for e, _ in hits], hits[0][1])
 
-        sustained = [m for m in metrics if m["summary"]["elevated_fraction"] >= 0.5]
+        sustained = [m for m in metrics if m["summary"]["elevated_fraction"] >= SUSTAINED_FRACTION]
         evidence: list[dict[str, str]] = []
         limitations = [
             "Based on simulated demo telemetry from the allowlisted read-only tools, not production data.",

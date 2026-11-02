@@ -61,6 +61,10 @@ class Settings:
     # Public-demo backstops (per process). Generous locally; the AWS stack sets lower values.
     rate_per_minute: int = 30
     rate_per_hour: int = 300
+    # The same caps for one signed-in user (or for the shared anonymous owner when sign-in is off). Generous locally,
+    # where one person runs many investigations in a row; the AWS stack sets stricter values.
+    user_rate_per_minute: int = 30
+    user_rate_per_hour: int = 300
     # Where records live: "local" (SQLite file), "memory" (tests), or "dynamodb" (needs dynamodb_table).
     storage_mode: str = "local"
     dynamodb_table: str = ""
@@ -109,6 +113,8 @@ class Settings:
             tool_result_max_bytes=_int_env("TOOL_RESULT_MAX_BYTES", cls.tool_result_max_bytes, 1_024, 1_048_576),
             rate_per_minute=_int_env("INVESTIGATIONS_PER_MINUTE", cls.rate_per_minute, 1, 10_000),
             rate_per_hour=_int_env("INVESTIGATIONS_PER_HOUR", cls.rate_per_hour, 1, 100_000),
+            user_rate_per_minute=_int_env("USER_INVESTIGATIONS_PER_MINUTE", cls.user_rate_per_minute, 1, 10_000),
+            user_rate_per_hour=_int_env("USER_INVESTIGATIONS_PER_HOUR", cls.user_rate_per_hour, 1, 100_000),
             storage_mode=storage_mode,
             dynamodb_table=table,
             local_data_dir=os.environ.get("LOCAL_DATA_DIR", "").strip() or cls.local_data_dir,
