@@ -133,6 +133,13 @@ function site(authConfig) {
         });
         const payload = Buffer.from(await upstream.arrayBuffer());
         const back = Object.fromEntries([...upstream.headers].filter(([k]) => !hop.has(k)));
+        if (upstream.status === 404) {
+          // CloudFront's distribution-wide custom error response: any 404, from the API too, is answered with the
+          // site's 404 page. The status survives; the JSON error body does not. The real site behaves this way.
+          const page = join(out, "404.html");
+          res.writeHead(404, { "Content-Type": "text/html" }).end(existsSync(page) ? readFileSync(page) : "not found");
+          return;
+        }
         res.writeHead(upstream.status, back).end(payload);
       } catch {
         res.writeHead(502).end("backend unreachable");
