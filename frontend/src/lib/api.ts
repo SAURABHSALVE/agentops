@@ -1,5 +1,13 @@
 import { clearSession, getSession } from "./auth";
-import type { Incident, IncidentSummary, Investigation, InvestigationSummary, TimelineEvent } from "./types";
+import type {
+  AwsConnection,
+  AwsConnectionSettings,
+  Incident,
+  IncidentSummary,
+  Investigation,
+  InvestigationSummary,
+  TimelineEvent,
+} from "./types";
 
 // Local development talks to the API on :8000. The deployed static site shares an origin with the API
 // (CloudFront routes /api/* to it), so the base is empty there. Public config only: never a secret.
@@ -35,6 +43,8 @@ export interface PublicConfig {
   /** Absent on an API older than sign-in. */
   auth?: { mode: "none" | "cognito" };
   provider: { kind: "mock" | "openai"; label: string };
+  /** Absent on an API older than Phase 16. Whether this site offers "connect your AWS account". */
+  aws_connect?: { available: boolean };
 }
 
 export class ApiError extends Error {
@@ -52,7 +62,8 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
   const token = getSession()?.accessToken;
   try {
     const headers: Record<string, string> = { Accept: "application/json", ...(init?.headers as Record<string, string>) };
-    const code = init?.method === "POST" || init?.method === "DELETE" ? getAccessCode() : "";
+    const method = init?.method;
+    const code = method === "POST" || method === "PUT" || method === "DELETE" ? getAccessCode() : "";
     if (code) headers["X-Access-Code"] = code;
     if (token) headers["Authorization"] = `Bearer ${token}`;
     res = await fetch(`${API_BASE}${path}`, { ...init, headers });
@@ -98,6 +109,23 @@ export const api = {
     request<Investigation | null>(`/api/incidents/${enc(id)}/investigations/latest`, { signal }),
   myInvestigations: (signal?: AbortSignal) => request<InvestigationSummary[]>("/api/me/investigations", { signal }),
   deleteMyInvestigations: () => request<{ deleted: number }>("/api/me/investigations", { method: "DELETE" }),
+  awsConnection: (signal?: AbortSignal) => request<AwsConnection>("/api/me/aws-connection", { signal }),
+  saveAwsConnection: (settings: AwsConnectionSettings) =>
+    request<AwsConnection>("/api/me/aws-connection", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...settings, accept_data_use: true }),
+    }),
+  /** The template as text (the file the user uploads to CloudFormation). */
+  awsConnectionTemplate: async (): Promise<string> =>
+    JSON.stringify(await request<unknown>("/api/me/aws-connection/template"), null, 2),
+  registerAwsRole: (roleArn: string) =>
+    request<AwsConnection>("/api/me/aws-connection/role", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role_arn: roleArn.trim() }),
+    }),
+  disconnectAws: () => request<AwsConnection>("/api/me/aws-connection", { method: "DELETE" }),
   getInvestigation: (id: string, signal?: AbortSignal) =>
     request<Investigation>(`/api/investigations/${enc(id)}`, { signal }),
   startInvestigation: (incidentId: string) =>

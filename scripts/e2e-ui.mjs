@@ -12,10 +12,11 @@
 // STACK=1 (with none of the modes below, or with GATED=<code> / CAPTURED=1) starts its own API and serves the production
 // build in frontend/out on one origin with sign-in off, instead of using a dev server you started: nothing else to run.
 // AUTH=1 checks sign-in end to end against a fake Cognito, starting its own API and serving frontend/out
+// (with "Connect your AWS account" switched on; AUTH=1 NO_CONNECT=1 checks that it is hidden when it is off)
 // (run `npm run build` in frontend/ first); it needs nothing else running. See scripts/e2e-auth-harness.mjs.
 
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -124,6 +125,18 @@ async function shot(name) {
   writeFileSync(join(SHOTS, `${name}.png`), Buffer.from(data, "base64"));
 }
 
+/** Type into a React-controlled input, textarea or select the way a person would. */
+const setValue = (selector, value) =>
+  evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; const proto = el.tagName === "SELECT" ? HTMLSelectElement.prototype : el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(proto, "value").set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`);
+async function waitGone(needle, timeout = 30000) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    if (!(await text()).includes(needle)) return true;
+    await sleep(250);
+  }
+  return false;
+}
+
 let stack = null;
 if (process.env.STACK && !process.env.AUTH) {
   const { startHarness } = await import("./e2e-auth-harness.mjs");
@@ -137,7 +150,7 @@ if (process.env.STACK && !process.env.AUTH) {
 try {
   if (process.env.AUTH) {
     const { startHarness, USERS } = await import("./e2e-auth-harness.mjs");
-    const h = await startHarness();
+    const h = await startHarness({ backendEnv: process.env.NO_CONNECT ? {} : { AWS_CONNECT_ACCOUNT_ID: "111122223333" } });
     UI = h.siteUrl;
     try {
       const evalJson = (expr) => evaluate(`(async () => JSON.stringify(await (${expr})))()`).then(JSON.parse);
@@ -182,6 +195,71 @@ try {
       check("My investigations lists alice's run and what happened to the fix", (await waitText("Fix approved, and the incident is resolved", 20000)) && (await text()).includes("INC-1001") && (await text()).includes("Confidence: high"));
       await shot("auth-my-investigations");
 
+      // ---- connecting an AWS account (Phase 16A) -----------------------------------------------------
+      if (process.env.NO_CONNECT) {
+        check("with the feature off the header has no Connect AWS link", !(await text()).includes("Connect AWS"));
+        await goto("/connect/");
+        check("and the page says it is not switched on", await waitText("not switched on for this site", 15000));
+      } else {
+        check("the header links to Connect AWS", (await text()).includes("Connect AWS"));
+        await goto("/connect/");
+        check("the connect page lists every permission before asking for anything", (await waitText("What you would be allowing", 15000)) && (await text()).includes("cloudtrail:LookupEvents") && (await text()).includes("Setup only, for now"));
+        check("nothing can be saved before choosing log groups and agreeing", !(await clickButton("Save and continue")));
+        await setValue("#aws-region", "eu-west-1");
+        await setValue("#aws-groups", "/aws/lambda/checkout\n/ecs/payments");
+        check("nor with groups chosen but the wording not agreed to", !(await clickButton("Save and continue")));
+        await evaluate(`document.querySelector('input[type=checkbox]').click()`);
+        check("agreeing and saving moves on to step 2", (await clickButton("Save and continue")) && (await waitText("Step 2 · Create the read-only role", 15000)));
+        const externalId = (await text()).match(/agentops-[A-Za-z0-9_-]{20,}/)?.[0];
+        check("the ExternalId is shown", Boolean(externalId));
+        await shot("auth-connect");
+
+        check("the template can be read before it is deployed", (await clickButton("Show what is in it")) && (await waitText("sts:ExternalId", 15000)));
+        const shown = await evaluate(`document.querySelector('pre[aria-label="The CloudFormation template"]').innerText`);
+        check("it names the chosen groups and region, carries the ExternalId, and holds no write or data access", shown.includes("/aws/lambda/checkout") && shown.includes("eu-west-1") && shown.includes("logs:StartQuery") && shown.includes(externalId) && !/s3:|dynamodb:|secretsmanager:|:Delete|:Put|:Create/.test(shown));
+
+        // The download goes through the same Content-Security-Policy as the real site: a blocked one would save nothing.
+        const downloads = mkdtempSync(join(tmpdir(), "agentops-dl-"));
+        await cdp.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloads }).catch(() => cdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: downloads }));
+        check("Download template can be pressed", await clickButton("Download template"));
+        const file = join(downloads, "agentops-read-only-role.template.json");
+        let saved = null;
+        for (let i = 0; i < 40 && saved === null; i++) {
+          try {
+            saved = JSON.parse(readFileSync(file, "utf8"));
+          } catch {
+            await sleep(250);
+          }
+        }
+        check("the downloaded file is the template", saved?.Resources?.AgentOpsReadOnlyRole?.Type === "AWS::IAM::Role");
+        rmSync(downloads, { recursive: true, force: true });
+
+        await setValue("#aws-role-arn", "nonsense");
+        check("a malformed ARN is refused in plain words", (await clickButton("Save role")) && (await waitText("Something in the form is not valid", 15000)));
+        await setValue("#aws-role-arn", "arn:aws:iam::999988887777:role/AgentOpsReadOnly");
+        check("another account is refused during the first rollout", (await clickButton("Save role")) && (await waitText("not enabled for connecting", 15000)));
+        await setValue("#aws-role-arn", "arn:aws:iam::111122223333:role/AgentOpsReadOnly");
+        check("the owner's account is accepted, and the page says it is not tested yet", (await clickButton("Save role")) && (await waitText("Not tested yet", 15000)));
+
+        await goto("/connect/");
+        check("the connection is still there after a reload", (await waitText("Not tested yet", 15000)) && (await text()).includes("arn:aws:iam::111122223333:role/AgentOpsReadOnly"));
+        check("the region and groups are remembered", (await evaluate(`document.querySelector('#aws-region').value`)) === "eu-west-1" && (await evaluate(`document.querySelector('#aws-groups').value`)) === "/aws/lambda/checkout\n/ecs/payments");
+
+        await setValue("#aws-groups", "/aws/lambda/checkout");
+        check("changing the groups does not ask to agree again", await clickButton("Save changes"));
+        check("it needs a new role, but keeps the same ExternalId", (await waitGone("Not tested yet", 15000)) && (await text()).includes(externalId));
+
+        await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+        await goto("/connect/");
+        await waitText("Step 2 ·", 15000);
+        await clickButton("Show what is in it");
+        await waitText("sts:ExternalId", 15000);
+        const wideConnect = await evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth");
+        check("phone: the connect page does not scroll sideways", wideConnect <= 1, `(${wideConnect}px too wide)`);
+        await shot("auth-connect-phone");
+        await cdp.send("Emulation.clearDeviceMetricsOverride");
+      }
+
       // ---- signing out hides it again ----------------------------------------------------------
       check("sign out works", await clickButton("Sign out"));
       check("back at the dashboard, signed out", (await waitText("Showing 6 of 6 incidents", 20000)) && !(await text()).includes(USERS.alice.email));
@@ -191,13 +269,21 @@ try {
 
       await goto("/investigations/");
       check("a visitor is asked to sign in to see investigations", await waitText("Sign in to see your investigations", 15000));
+      await goto("/connect/");
+      check("a visitor is asked to sign in to connect an AWS account", await waitText("Sign in to connect an AWS account", 15000));
 
       // ---- bob is a different person -----------------------------------------------------------
       h.state.user = USERS.bob;
       await clickButton("Sign in");
       check("bob signs in", await waitText(USERS.bob.email, 20000));
+      if (!process.env.NO_CONNECT) {
+        await goto("/connect/");
+        // (the help text under the box mentions an example group, so look at what is in the box, not at the page)
+        const bobOk = (await waitText("What you would be allowing", 15000)) && !(await text()).includes("Step 2 ·") && !/agentops-[A-Za-z0-9_-]{20,}/.test(await text()) && (await evaluate(`document.querySelector('#aws-groups')?.value`)) === "";
+        check("bob sees none of alice's AWS connection", bobOk);
+      }
       await goto("/");
-      check("a brand-new account is welcomed and pointed at a first incident", (await waitText("Welcome!", 15000)) && (await text()).includes("Start with INC-1001"));
+      check("a brand-new account is welcomed and pointed at a first incident", (await waitText("Welcome!", 15000)) && (await waitText("Start with INC-1001", 15000)));
       await shot("auth-welcome");
       await goto("/incidents/INC-1001/");
       check("bob does not see alice's investigation", (await waitText("No investigation has been run", 20000)) && !(await text()).includes("Passed: incident resolved"));
@@ -232,6 +318,14 @@ try {
       check("her list is now empty", await waitText("You have not run an investigation yet", 20000));
       await goto("/incidents/INC-1001/");
       check("and the incident shows nothing of hers", (await waitText("No investigation has been run", 20000)) && !(await text()).includes("Passed: incident resolved"));
+      if (!process.env.NO_CONNECT) {
+        await goto("/connect/");
+        check("deleting her investigations did not touch her AWS connection", (await waitText("Step 2 ·", 15000)) && (await evaluate(`document.querySelector('#aws-groups').value`)) === "/aws/lambda/checkout");
+        check("disconnecting asks first", (await clickButton("Disconnect…")) && (await waitText("Disconnect this AWS account?", 10000)));
+        check("confirming disconnects", (await clickButton("Yes, disconnect")) && (await waitGone("Step 2 ·", 15000)));
+        await goto("/connect/");
+        check("and it stays disconnected after a reload", (await waitText("What you would be allowing", 15000)) && !(await text()).includes("Step 2 ·") && (await evaluate(`document.querySelector('#aws-groups').value`)) === "");
+      }
       await clickButton("Sign out");
       await waitText("Showing 6 of 6 incidents", 20000);
       h.state.user = USERS.bob;

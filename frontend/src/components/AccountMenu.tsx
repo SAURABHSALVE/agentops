@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useAuth } from "@/lib/use-auth";
+import { useAuth, useAwsConnectAvailable } from "@/lib/use-auth";
 
 /** Sign in / sign out, shown only when the API requires sign-in. */
 export function AccountMenu() {
   const auth = useAuth();
+  const canConnect = useAwsConnectAvailable();
   if (auth.status === "loading" || auth.status === "off") return null;
 
   if (auth.status === "unavailable") {
@@ -18,6 +19,11 @@ export function AccountMenu() {
         <Link href="/investigations" className="text-sm underline hover:text-foreground">
           My investigations
         </Link>
+        {canConnect && (
+          <Link href="/connect" className="text-sm underline hover:text-foreground">
+            Connect AWS
+          </Link>
+        )}
         <span className="max-w-[16rem] truncate text-muted" title={auth.email ?? undefined}>
           {auth.email ?? "Signed in"}
         </span>

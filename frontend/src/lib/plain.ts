@@ -79,6 +79,11 @@ const ERROR_HELP: Record<string, string> = {
   invalid_token: "Your sign-in has expired. Sign in again to continue.",
   auth_unavailable: "Sign-in is temporarily unavailable. Try again in a minute.",
   investigation_in_progress: "An investigation is already running for this incident. It will update here when done.",
+  aws_connect_unavailable: "Connecting an AWS account is not available on this site.",
+  aws_connection_not_set_up: "Save your region and log groups first (step 1).",
+  aws_account_not_enabled:
+    "That AWS account is not enabled for connecting on this site yet. During the first rollout only the site owner's account can connect.",
+  consent_out_of_date: "The wording you agreed to has changed. Read it and agree again.",
 };
 
 /** Turn an API error into advice a non-engineer can act on. Falls back to the server's own message. */
