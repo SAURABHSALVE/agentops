@@ -111,3 +111,34 @@ reject, ambiguous incident, injection incident, unknown incident). Modes: defaul
 `GATED=<code>`, and `CAPTURED=1` for the lab dataset. Passed 3 of 3 consecutive runs on a fresh database in mock mode, and
 once each in live, API-down, gated and captured modes (the captured run: 12 checks against the live model, including the
 real verification failure on INC-2003; the simulated flow was rerun after the loop changes: 28 checks). One flaky check (a case-sensitive text match racing the timeline refresh) was found and fixed.
+
+## 7. A backend ceiling on confidence (Phase 15)
+
+*Problem (Section 3):* on the ambiguous incident INC-1004 the live model reported medium confidence in every completed run
+(answer key: low). A prompt change did not help and was reverted: a rule a model may ignore is not a guarantee.
+
+*Change:* `backend/app/agent/calibration.py` applies the objective half of the prompt's own rubric, in code, from the tool
+results this run actually retrieved. Any confidence above low needs a metric elevated for at least half of the incident
+window; high also needs the deployment history checked and no runtime change shortly before the incident. It only ever
+lowers confidence, shows the change on screen ("The agent first claimed medium..."), and withholds a fix whose
+confidence falls to low. An off-list or inapplicable fix still fails the run. The prompt now tells the model this check
+exists. Checked against the data first: INC-1004's metrics peak at 15% of the window, every clear incident's expected metric
+is elevated 98% to 100%, and the two incidents with a recent release (INC-1002, INC-2002) cap at medium, as documented.
+
+*Measured, live `gpt-4.1-mini`, 3 runs on each of the 6 simulated incidents, 148,184 tokens:*
+
+| | Completed | Cites real failure log | Cites expected metric | Claimed confidence within cap | **Reported** confidence within cap | Guard lowered | Right remediation | Injection ignored |
+|---|---|---|---|---|---|---|---|---|
+| Run 3 (Section 2, before) | 18/18 | 18/18 | 18/18 | 16/18 | 16/18 | n/a | 18/18 | 3/3 |
+| After the ceiling | 18/18 | 18/18 | 18/18 | 17/18 | **18/18** | 1/18 | 18/18 | 3/3 |
+
+On the captured lab incidents (INC-2001 to INC-2003, 2 runs each, 52,951 tokens): 6/6 completed, the guard never fired,
+the right fixes were proposed (INC-2001 and INC-2003) and INC-2002 stayed at medium with none, as before.
+Offline: the mock is never lowered on any of the nine incidents (a test), and its evaluation is unchanged (18/18).
+
+*What this does and does not show.* The guard acted once in 18 runs, and the model happened to claim a within-cap answer in
+2 of the 3 INC-1004 runs, so most of the improvement from 16/18 to 18/18 on this sample is model variation, not the guard.
+What the guard changes is the guarantee: on a run where the model over-claims, the reader is no longer shown the over-claim.
+The sample is small and a live model is not deterministic; the numbers are indicative. The guard cannot judge whether the
+*cause* is right, only whether the evidence gathered supports the confidence, and a model that never checks metrics gets
+capped at low, which is deliberate.

@@ -87,7 +87,22 @@ this account**; do a rehearsal on a `dev` stage before relying on it.
 - **"Incident not found" on a real incident right after signing in (fixed 2026-11-02):** CloudFront has a distribution-wide custom
   error response, so *every* 404 (the API's too) is answered with the site's HTML 404 page. The status survives, the JSON
   error body does not. `GET .../investigations/latest` answers 404 for "you have not investigated this yet", which is normal
-  for a new account; the site now goes by the status. **Remember this when adding an API route that returns 404 on purpose**:
+  for a new account. The API now answers `200 null` for that case, so first-time visitors no longer see a failed request in their
+  console. **Remember this when adding an API route that returns 404 on purpose**:
   clients must not depend on its `error.code`. `scripts/e2e-auth-harness.mjs` reproduces this behaviour.
 - **Removing sign-in:** redeploy with `-c auth=none`. The pool is **kept** in prod (retained); delete it by hand only when
   you are sure, after switching off its deletion protection.
+
+## The live AI
+Default is the offline mock. To turn on the real model (spends OpenAI tokens, so do these in order):
+1. **OpenAI dashboard:** set a project **spend limit** first. It is the real cost cap.
+2. **Store the key by hand** (never in chat, git or CI): in your own terminal with an admin (non-root) identity,
+   `aws secretsmanager put-secret-value --secret-id <OpenAiSecretName output of AgentOps-prod-Data> --secret-string file://key.txt`
+   then delete `key.txt`.
+3. **GitHub repository variables:** `AGENT_PROVIDER=openai` (and optionally `OPENAI_MODEL`).
+4. **Deploy manually** (Actions, Deploy, Run workflow) and tick *Let this run apply IAM-broadening changes*: live mode adds read
+   access to two named secrets and an access code, which the pipeline refuses to grant on its own. Read the `cdk diff` first.
+5. Live mode adds a shared **access code** (Secrets Manager `AccessCode`), required on top of signing in. Per-user caps drop to
+   3 a minute and 20 an hour.
+To switch back: delete or reset `AGENT_PROVIDER` and redeploy. A push to `main` with `AGENT_PROVIDER=openai` set but no manual
+approval fails safe at the IAM check instead of going live.

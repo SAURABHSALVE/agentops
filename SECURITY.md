@@ -57,7 +57,9 @@ read from Secrets Manager. **Still your job before exposing a key:** set a spend
 **Sign-in (D-036):** with a Cognito user pool configured, writes need a signed-in user and every record belongs to one.
 Tokens are verified in the backend, never trusted from the browser; the owner id comes only from the verified `sub`. Access
 tokens are kept in `sessionStorage` (readable by script on the page, so there is no stronger secret than "can run
-investigations as you"); a Content-Security-Policy is not set yet. Self sign-up is open by design, so sign-in limits what a
+investigations as you"). CloudFront sends a Content-Security-Policy whose `connect-src` allows only this origin and Cognito's
+hosted page, so a stolen token has nowhere to go; `script-src` still allows inline script because the static export needs it
+(DECISIONS D-039). Each user also has their own investigation cap on top of the shared one. Self sign-up is open by design, so sign-in limits what a
 stranger can do to your *data*, not who can create an account.
 
 A deployed backend that holds a billable key is an abuse target. Before exposing it: access control and rate limiting on the
