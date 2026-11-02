@@ -7,6 +7,7 @@ A deployed backend that holds a billable model key is an abuse target (SECURITY.
   The comparison is constant-time and a wrong or missing code is a plain 401 that reveals nothing.
 * RateLimiter: caps how many investigations can start per minute and per hour for the whole process.
   It is per process, so it is a backstop behind the API Gateway throttle, not a global guarantee.
+* KeyedRateLimiter: the same caps for one signed-in user, so one person cannot use up everyone's share.
 
 The code itself is never logged and never returned. Locally nothing is configured, so nothing changes.
 """
@@ -15,7 +16,7 @@ import hmac
 import os
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 
 from app.config import ConfigError
@@ -79,3 +80,31 @@ class RateLimiter:
                     wait = int(window - (now - inside[0])) + 1
                     raise RateLimitedError(f"Too many investigations started. Try again in about {wait} s.", wait)
             self._events.append(now)
+
+
+class KeyedRateLimiter:
+    """One RateLimiter per key (a user id). Remembers at most `max_keys` keys, dropping the least recently seen.
+
+    Per process, like RateLimiter: it limits how fast one person can start investigations on the container that
+    serves them, not across the whole fleet. Memory is bounded: a flood of new ids cannot grow it without limit.
+    """
+
+    def __init__(
+        self,
+        per_minute: int,
+        per_hour: int,
+        clock: Callable[[], float] = time.monotonic,
+        max_keys: int = 1_000,
+    ) -> None:
+        self._per_minute, self._per_hour, self._clock, self._max = per_minute, per_hour, clock, max_keys
+        self._limiters: OrderedDict[str, RateLimiter] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def check(self, key: str) -> None:
+        """Record one start for `key`, or raise RateLimitedError (nothing is recorded then)."""
+        with self._lock:
+            limiter = self._limiters.pop(key, None) or RateLimiter(self._per_minute, self._per_hour, self._clock)
+            self._limiters[key] = limiter  # most recently seen goes last
+            while len(self._limiters) > self._max:
+                self._limiters.popitem(last=False)
+        limiter.check()

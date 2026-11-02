@@ -34,7 +34,7 @@ from app.errors import (
 )
 from app.repository import InMemoryIncidentRepository
 from app.schemas import ErrorDetail, ErrorResponse
-from app.security import ACCESS_HEADER, AccessGate, RateLimiter, load_access_code
+from app.security import ACCESS_HEADER, AccessGate, KeyedRateLimiter, RateLimiter, load_access_code
 from app.simulator.captured import CapturedSource
 from app.simulator.service import Simulator
 from app.simulator.source import FixtureSource, TelemetrySource
@@ -105,6 +105,7 @@ def create_app(
     app.state.access = access or AccessGate(load_access_code())
     app.state.verifier = verifier or build_verifier(settings)  # None unless a Cognito user pool is configured
     app.state.limiter = RateLimiter(settings.rate_per_minute, settings.rate_per_hour)
+    app.state.user_limiter = KeyedRateLimiter(settings.user_rate_per_minute, settings.user_rate_per_hour)
 
     @app.middleware("http")
     async def _security_headers(request: Request, call_next: Any) -> Any:

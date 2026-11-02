@@ -231,6 +231,7 @@ def test_every_alarm_notifies_the_topic_and_missing_data_is_not_an_outage(dev: B
         "agentops-dev-LambdaThrottles",
         "agentops-dev-Api5xx",
         "agentops-dev-LambdaDurationNearTimeout",
+        "agentops-dev-TokenRefusalsSpike",
     }
     for r in alarms.values():
         assert r["Properties"]["TreatMissingData"] == "notBreaching"

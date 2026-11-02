@@ -182,7 +182,10 @@ def start_investigation(
 ) -> Investigation:
     """Start an investigation and return immediately; poll the returned id until it is not 'running'."""
     svc = _investigations(request, owner)
-    request.app.state.limiter.check()  # before any record exists, so a refusal never leaves one 'running'
+    # Before any record exists, so a refusal never leaves one 'running'. The person's own cap first: someone over
+    # it is turned away without using up the shared allowance.
+    request.app.state.user_limiter.check(owner)
+    request.app.state.limiter.check()
     started = svc.start(incident_id)
     background.add_task(svc.run, started.id)
     return started

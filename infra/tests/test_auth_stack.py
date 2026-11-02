@@ -146,3 +146,66 @@ def test_the_auth_stack_publishes_the_pool_and_hosted_address(dev: Built) -> Non
     assert dev.auth is not None
     dev.auth.has_output("UserPoolId", Match.any_value())
     dev.auth.has_output("HostedUiUrl", Match.any_value())
+
+
+# ---- Content-Security-Policy ------------------------------------------------------------------
+
+
+def _csp(built: Built) -> str:
+    policies = built.frontend.find_resources("AWS::CloudFront::ResponseHeadersPolicy")
+    assert len(policies) == 1
+    config = next(iter(policies.values()))["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"]
+    return flat(config["ContentSecurityPolicy"])
+
+
+def test_the_policy_allows_connections_only_to_this_origin_and_the_hosted_page(prod: Built) -> None:
+    text = _csp(prod)
+    assert "connect-src 'self'" in text and "amazoncognito.com" in text or "Fn::" in text  # the hosted page, a token
+    assert "'unsafe-eval'" not in text
+    for directive in ("frame-ancestors 'none'", "base-uri 'self'", "object-src 'none'", "form-action 'self'"):
+        assert directive in text
+    assert "https:" not in text.replace("https://", "")  # no blanket scheme allowance
+    assert "*" not in text  # and no wildcard sources
+
+
+def test_the_policy_overrides_whatever_the_origin_sends(prod: Built) -> None:
+    policies = prod.frontend.find_resources("AWS::CloudFront::ResponseHeadersPolicy")
+    config = next(iter(policies.values()))["Properties"]["ResponseHeadersPolicyConfig"]["SecurityHeadersConfig"]
+    assert config["ContentSecurityPolicy"]["Override"] is True
+
+
+def test_without_sign_in_the_policy_allows_only_this_origin(open_demo: Built) -> None:
+    assert "connect-src 'self'" in _csp(open_demo) and "amazoncognito" not in _csp(open_demo)
+
+
+def test_the_browser_test_harness_serves_the_same_policy() -> None:
+    """The harness is how a policy that would break the real site is caught, so it must not drift from the source."""
+    from pathlib import Path
+
+    from agentops_infra.csp import STATIC_DIRECTIVES
+
+    harness = (Path(__file__).resolve().parents[2] / "scripts" / "e2e-auth-harness.mjs").read_text(encoding="utf-8")
+    for directive in STATIC_DIRECTIVES:
+        assert f'"{directive}"' in harness, directive
+
+
+# ---- sign-in alarm ----------------------------------------------------------------------------
+
+
+def test_a_burst_of_refused_tokens_raises_an_alarm(dev: Built) -> None:
+    dev.monitoring.has_resource_properties(
+        "AWS::Logs::MetricFilter",
+        {"FilterPattern": '"token refused"', "MetricTransformations": Match.any_value()},
+    )
+    dev.monitoring.has_resource_properties(
+        "AWS::CloudWatch::Alarm",
+        {"AlarmName": "agentops-dev-TokenRefusalsSpike", "Threshold": 50, "MetricName": "TokenRefused"},
+    )
+
+
+def test_no_sign_in_means_no_sign_in_alarm(open_demo: Built) -> None:
+    open_demo.monitoring.resource_count_is("AWS::Logs::MetricFilter", 0)
+    names = {
+        r["Properties"]["AlarmName"] for r in open_demo.monitoring.find_resources("AWS::CloudWatch::Alarm").values()
+    }
+    assert "agentops-dev-TokenRefusalsSpike" not in names

@@ -29,6 +29,22 @@ export const USERS = {
   bob: { sub: "22222222-2222-4222-8222-222222222222", email: "bob@example.com" },
 };
 
+// The same directives as infra/agentops_infra/csp.py (a test compares them), with the fake Cognito as the one extra
+// place the page may connect to. The browser test fails on any violation, so a policy that would break the real
+// site is caught here.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self' data:",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+  `connect-src 'self' http://localhost:${ISSUER_PORT}`,
+].join("; ");
+
 const b64 = (buf) => Buffer.from(buf).toString("base64url");
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json",
   ".txt": "text/plain", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2" }; // fmt: skip
@@ -137,7 +153,7 @@ function site(authConfig) {
           // CloudFront's distribution-wide custom error response: any 404, from the API too, is answered with the
           // site's 404 page. The status survives; the JSON error body does not. The real site behaves this way.
           const page = join(out, "404.html");
-          res.writeHead(404, { "Content-Type": "text/html" }).end(existsSync(page) ? readFileSync(page) : "not found");
+          res.writeHead(404, { "Content-Type": "text/html", "Content-Security-Policy": CSP }).end(existsSync(page) ? readFileSync(page) : "not found");
           return;
         }
         res.writeHead(upstream.status, back).end(payload);
@@ -147,7 +163,7 @@ function site(authConfig) {
       return;
     }
     if (url.pathname === "/auth-config.json") {
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(authConfig));
+      res.writeHead(200, { "Content-Type": "application/json", "Content-Security-Policy": CSP }).end(JSON.stringify(authConfig));
       return;
     }
     let path = decodeURIComponent(url.pathname);
@@ -156,10 +172,10 @@ function site(authConfig) {
     const file = normalize(join(out, path));
     if (!file.startsWith(out) || !existsSync(file) || !statSync(file).isFile()) {
       const notFound = join(out, "404.html");
-      res.writeHead(404, { "Content-Type": "text/html" }).end(existsSync(notFound) ? readFileSync(notFound) : "not found");
+      res.writeHead(404, { "Content-Type": "text/html", "Content-Security-Policy": CSP }).end(existsSync(notFound) ? readFileSync(notFound) : "not found");
       return;
     }
-    res.writeHead(200, { "Content-Type": MIME[extname(file)] ?? "application/octet-stream", "Cache-Control": "no-store" }).end(readFileSync(file));
+    res.writeHead(200, { "Content-Type": MIME[extname(file)] ?? "application/octet-stream", "Cache-Control": "no-store", "Content-Security-Policy": CSP }).end(readFileSync(file));
   });
 }
 

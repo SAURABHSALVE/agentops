@@ -60,6 +60,8 @@ async function launch() {
   throw new Error("Browser did not start.");
 }
 
+const browserProblems = []; // script errors and console errors the pages raised (for the AUTH run)
+
 function connect(wsUrl) {
   const ws = new WebSocket(wsUrl);
   let id = 0;
@@ -70,6 +72,10 @@ function connect(wsUrl) {
       const { resolve, reject } = pending.get(msg.id);
       pending.delete(msg.id);
       msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
+    } else if (msg.method === "Runtime.exceptionThrown") {
+      browserProblems.push(`exception: ${msg.params.exceptionDetails.exception?.description ?? msg.params.exceptionDetails.text}`);
+    } else if (msg.method === "Log.entryAdded" && msg.params.entry.level === "error") {
+      browserProblems.push(`log: ${msg.params.entry.text} ${msg.params.entry.url ?? ""}`);
     }
   };
   const opened = new Promise((r) => (ws.onopen = r));
@@ -86,6 +92,8 @@ const { proc, dir, wsUrl } = await launch();
 const cdp = connect(wsUrl);
 await cdp.opened;
 await cdp.send("Page.enable");
+await cdp.send("Runtime.enable");
+await cdp.send("Log.enable");
 
 const evaluate = async (expr) => {
   const r = await cdp.send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
@@ -237,6 +245,10 @@ try {
       check("a callback without a matching state is refused", await waitText("not valid or was already used"));
       check("no session came out of it", !(await text()).includes("@example.com"));
       await shot("auth-callback-refused");
+
+      // ---- the Content-Security-Policy the real site sends did not block anything the pages need ------------
+      const blocked = browserProblems.filter((p) => /Content Security Policy|Refused to|^exception/i.test(p));
+      check("no page raised a script error or broke the Content-Security-Policy", blocked.length === 0, blocked.slice(0, 3).join(" | "));
     } finally {
       await h.stop();
     }
