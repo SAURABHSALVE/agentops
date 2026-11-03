@@ -21,14 +21,12 @@ EXPECTED_ACTIONS = {
     "cloudwatch:DescribeAlarmHistory",
     "cloudwatch:GetMetricData",
     "cloudwatch:ListMetrics",
-    "logs:StartQuery",
-    "logs:GetQueryResults",
-    "logs:StopQuery",
+    "logs:FilterLogEvents",
     "cloudtrail:LookupEvents",
 }
 
 
-def connection(log_groups: tuple[str, ...] = ("/aws/lambda/checkout", "/ecs/payments*")) -> AwsConnection:
+def connection(log_groups: tuple[str, ...] = ("/aws/lambda/checkout", "/ecs/payments")) -> AwsConnection:
     return AwsConnection(
         status="draft",
         external_id=EXTERNAL_ID,
@@ -92,15 +90,15 @@ def test_nothing_in_the_policy_can_change_read_or_widen_anything_else() -> None:
 def test_log_search_is_limited_to_the_listed_groups_and_the_rest_cannot_read_logs() -> None:
     template = render_template(connection(), principal_arn=PRINCIPAL)
     by_sid = {s["Sid"]: s for s in statements(template)}
-    assert by_sid["LogsSearch"]["Action"] == ["logs:StartQuery"]
+    assert by_sid["LogsSearch"]["Action"] == ["logs:FilterLogEvents"]
     assert by_sid["LogsSearch"]["Resource"] == [
         {"Fn::Sub": "arn:aws:logs:eu-west-1:${AWS::AccountId}:log-group:/aws/lambda/checkout:*"},
-        {"Fn::Sub": "arn:aws:logs:eu-west-1:${AWS::AccountId}:log-group:/ecs/payments*:*"},
+        {"Fn::Sub": "arn:aws:logs:eu-west-1:${AWS::AccountId}:log-group:/ecs/payments:*"},
     ]
-    # Only these four are account-wide, because AWS offers no narrower form for them; none of them starts a log search.
+    # Only these three are account-wide, because AWS offers no narrower form for them; none of them can read a log.
     wide = {sid for sid, s in by_sid.items() if s["Resource"] == "*"}
-    assert wide == {"Alarms", "Metrics", "LogsResults", "Changes"}
-    assert all("logs:StartQuery" not in by_sid[sid]["Action"] for sid in wide)
+    assert wide == {"Alarms", "Metrics", "Changes"}
+    assert all(not a.startswith("logs:") for sid in wide for a in by_sid[sid]["Action"])
 
 
 def test_every_permission_in_the_catalogue_is_one_statement_with_a_distinct_id() -> None:
@@ -125,7 +123,7 @@ def test_a_different_user_gets_a_different_external_id_in_their_template() -> No
     [
         "/aws/lambda/checkout",
         "checkout-service",
-        "/ecs/payments*",
+        "/ecs/payments",
         "/aws/lambda/My_Func.v2#1",
         "a" * 200,
     ],
@@ -147,7 +145,9 @@ def test_ordinary_log_group_names_are_accepted(name: str) -> None:
         "${AWS::AccountId}",  # would be expanded by Fn::Sub
         'a"b',
         "a\nb",
-        "a*b",  # a wildcard only at the end
+        "a*b",  # no wildcards: a log group is searched by its exact name
+        "/ecs/payments*",
+        "/aws/lambda/checkout-*",
         "a**",
         "<script>alert(1)</script>",
         "a" * 201,

@@ -35,12 +35,14 @@ from app.simulator.source import DataMode, FixtureSource, TelemetrySource
 MAX_MESSAGE_CHARS = 300  # bound per-entry size: log text is untrusted and may be long
 
 
-def _no_match_id(service: str, query: str) -> str:
+def no_match_id(service: str, query: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:40] or "query"
     return f"logs:{service}:no-match:{slug}"
 
 
 class Simulator:
+    is_live = False  # demo data: simulated fixtures, or telemetry captured from the local lab
+
     def __init__(self, repo: IncidentRepository, source: TelemetrySource | None = None) -> None:
         self._repo = repo
         self._source: TelemetrySource = source or FixtureSource()
@@ -48,6 +50,9 @@ class Simulator:
     @property
     def data_mode(self) -> DataMode:
         return self._source.data_mode
+
+    def prepare(self) -> None:
+        """Nothing to set up: the demo data is in memory."""
 
     # ---- read-only diagnostic tools ----------------------------------------------------------
 
@@ -82,7 +87,7 @@ class Simulator:
             truncated=len(matches) > len(entries),
             entries=entries,
             # An empty search is itself evidence ("looked, found nothing") and gets a citable id, like deployments.
-            reference_ids=[e.id for e in entries] or [_no_match_id(incident.service, args.query)],
+            reference_ids=[e.id for e in entries] or [no_match_id(incident.service, args.query)],
         )
 
     def get_service_metrics(self, args: GetMetricsArgs) -> MetricsResult:

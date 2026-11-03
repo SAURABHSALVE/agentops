@@ -41,6 +41,7 @@ from app.agent.provider import (
     ToolCallRequest,
 )
 from app.agent.tools import ToolRunner, safe_tool_name, tool_schemas
+from app.diagnostics import Diagnostics
 from app.errors import TransientProviderError
 from app.simulator.remediation import REMEDIATIONS
 
@@ -59,6 +60,7 @@ FAILURE_MESSAGES: dict[FailureCode, str] = {
     "remediation_not_allowed": (
         "The model proposed a remediation that is not allowed for this incident, so the answer was rejected."
     ),
+    "source_unavailable": "AgentOps could not read your AWS account, so no findings were produced.",
     "internal_error": "The investigation failed unexpectedly.",
 }
 
@@ -72,14 +74,14 @@ class Limits:
     max_calls_per_round: int = 6
 
 
-def answer_schema() -> dict[str, Any]:
-    """FinalAnswer's JSON Schema with remediation_action_id narrowed to the real allowlist (or null).
-    This only guides a model; validate_answer still enforces it."""
+def answer_schema(live: bool = False) -> dict[str, Any]:
+    """FinalAnswer's JSON Schema with remediation_action_id narrowed to the real allowlist (or null; only null for a
+    real account, where nothing can be done). This only guides a model; validate_answer still enforces it."""
     schema = FinalAnswer.model_json_schema()
-    schema["properties"]["remediation_action_id"] = {
-        "anyOf": [{"type": "string", "enum": sorted(REMEDIATIONS)}, {"type": "null"}],
-        "title": "Remediation Action Id",
-    }
+    allowed: dict[str, Any] = (
+        {"type": "null"} if live else {"anyOf": [{"type": "string", "enum": sorted(REMEDIATIONS)}, {"type": "null"}]}
+    )
+    schema["properties"]["remediation_action_id"] = {**allowed, "title": "Remediation Action Id"}
     return schema
 
 
@@ -100,8 +102,18 @@ def _normalise_ids(calls: tuple[ToolCallRequest, ...], taken: int) -> tuple[Tool
     return tuple(out)
 
 
+LIVE_LIMITATION = (
+    "Read from your own AWS account through a read-only role, over a short window. "
+    "AgentOps cannot change anything there."
+)
+
+
 def validate_answer(
-    text: str, grounded: dict[str, EvidenceSource], service: str, ceiling: Ceiling | None = None
+    text: str,
+    grounded: dict[str, EvidenceSource],
+    service: str,
+    ceiling: Ceiling | None = None,
+    live: bool = False,
 ) -> Findings:
     """Turn raw provider text into Findings, or raise _Reject. Pure; no provider or tool access.
 
@@ -123,7 +135,14 @@ def validate_answer(
             raise _Reject("ungrounded_evidence")
 
     remediation: Remediation | None = None
-    if answer.remediation_action_id is not None:
+    notes: list[str] = []
+    if live:
+        # Nothing can be done in a real account, so an action is never offered. A model that names one anyway is
+        # ignored (and told so) rather than failing the run: nothing was, or could be, executed.
+        notes.append(LIVE_LIMITATION)
+        if answer.remediation_action_id is not None:
+            notes.append("The AI suggested an automated action; AgentOps does not offer actions on a real account.")
+    elif answer.remediation_action_id is not None:
         spec = REMEDIATIONS.get(answer.remediation_action_id)
         if spec is None or service not in spec.applicable_services or answer.confidence == "low":
             raise _Reject("remediation_not_allowed")
@@ -131,7 +150,7 @@ def validate_answer(
             action_id=spec.action_id, description=spec.description, expected_effect=spec.expected_effect
         )
 
-    confidence, rationale, limitations = answer.confidence, answer.confidence_rationale, list(answer.limitations)
+    confidence, rationale, limitations = answer.confidence, answer.confidence_rationale, [*answer.limitations, *notes]
     lowered_from = None
     if ceiling is not None and ceiling.lowers(confidence):
         lowered_from, confidence = confidence, ceiling.level
@@ -173,8 +192,15 @@ class Coordinator:
         except TransientProviderError:
             return self._provider.complete(request)  # one retry; tools are read-only so this is safe
 
-    def run(self, initial: Investigation, service: str, publish: Callable[[Investigation], None]) -> Investigation:
+    def run(
+        self,
+        initial: Investigation,
+        service: str,
+        publish: Callable[[Investigation], None],
+        diagnostics: Diagnostics | None = None,
+    ) -> Investigation:
         limits = self._limits
+        live = diagnostics is not None and diagnostics.is_live
         messages: list[Message] = [Message("user", USER_PROMPT.format(incident_id=initial.incident_id))]
         grounded: dict[str, EvidenceSource] = {}
         observed: list[tuple[str, dict[str, Any]]] = []  # successful tool results, for the confidence ceiling
@@ -197,10 +223,10 @@ class Coordinator:
                 return fail("budget_exceeded")
             rounds += 1
             request = CompletionRequest(
-                system=system_prompt(),
+                system=system_prompt(live),
                 messages=(*messages, Message("user", FINAL_ROUND_NOTICE)) if last_round else tuple(messages),
                 tools=() if last_round else tool_schemas(),
-                answer_schema=answer_schema(),
+                answer_schema=answer_schema(live),
                 max_output_tokens=limits.max_output_tokens,
             )
             started = time.perf_counter()
@@ -230,7 +256,9 @@ class Coordinator:
 
             if response.final_text is not None:
                 try:
-                    findings = validate_answer(response.final_text, grounded, service, evidence_ceiling(observed))
+                    findings = validate_answer(
+                        response.final_text, grounded, service, evidence_ceiling(observed), live=live
+                    )
                 except _Reject as rejected:
                     return fail(rejected.code)
                 state = RemediationRecord(action_id=findings.remediation.action_id) if findings.remediation else None
@@ -262,7 +290,7 @@ class Coordinator:
                     messages.append(Message("tool", encode_tool_result(name, payload), tool_call_id=call.id))
                     continue
 
-                outcome = self._runner.run(initial.incident_id, call.name, call.arguments)
+                outcome = self._runner.run(initial.incident_id, call.name, call.arguments, diagnostics)
                 logger.info(
                     "investigation %s tool=%s status=%s duration_ms=%d",
                     initial.id,

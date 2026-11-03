@@ -203,7 +203,7 @@ try {
       } else {
         check("the header links to Connect AWS", (await text()).includes("Connect AWS"));
         await goto("/connect/");
-        check("the connect page lists every permission before asking for anything", (await waitText("What you would be allowing", 15000)) && (await text()).includes("cloudtrail:LookupEvents") && (await text()).includes("Setup only, for now"));
+        check("the connect page lists every permission before asking for anything", (await waitText("What you would be allowing", 15000)) && (await text()).includes("cloudtrail:LookupEvents") && (await text()).includes("Nothing is read until you ask"));
         check("nothing can be saved before choosing log groups and agreeing", !(await clickButton("Save and continue")));
         await setValue("#aws-region", "eu-west-1");
         await setValue("#aws-groups", "/aws/lambda/checkout\n/ecs/payments");
@@ -216,7 +216,7 @@ try {
 
         check("the template can be read before it is deployed", (await clickButton("Show what is in it")) && (await waitText("sts:ExternalId", 15000)));
         const shown = await evaluate(`document.querySelector('pre[aria-label="The CloudFormation template"]').innerText`);
-        check("it names the chosen groups and region, carries the ExternalId, and holds no write or data access", shown.includes("/aws/lambda/checkout") && shown.includes("eu-west-1") && shown.includes("logs:StartQuery") && shown.includes(externalId) && !/s3:|dynamodb:|secretsmanager:|:Delete|:Put|:Create/.test(shown));
+        check("it names the chosen groups and region, carries the ExternalId, and holds no write or data access", shown.includes("/aws/lambda/checkout") && shown.includes("eu-west-1") && shown.includes("logs:FilterLogEvents") && shown.includes(externalId) && !/s3:|dynamodb:|secretsmanager:|:Delete|:Put|:Create/.test(shown));
 
         // The download goes through the same Content-Security-Policy as the real site: a blocked one would save nothing.
         const downloads = mkdtempSync(join(tmpdir(), "agentops-dl-"));
@@ -240,6 +240,8 @@ try {
         check("another account is refused during the first rollout", (await clickButton("Save role")) && (await waitText("not enabled for connecting", 15000)));
         await setValue("#aws-role-arn", "arn:aws:iam::111122223333:role/AgentOpsReadOnly");
         check("the owner's account is accepted, and the page says it is not tested yet", (await clickButton("Save role")) && (await waitText("Not tested yet", 15000)));
+        // Not pressed here: it would make this machine call a real AWS account. The backend tests cover the reading.
+        check("once the role is saved the page offers to check the alarms, labelled as real data", (await text()).includes("Check my alarms") && (await text()).includes("Your AWS account (live)"));
 
         await goto("/connect/");
         check("the connection is still there after a reload", (await waitText("Not tested yet", 15000)) && (await text()).includes("arn:aws:iam::111122223333:role/AgentOpsReadOnly"));

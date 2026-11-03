@@ -6,6 +6,7 @@ import type {
   IncidentSummary,
   Investigation,
   InvestigationSummary,
+  LiveIncidents,
   TimelineEvent,
 } from "./types";
 
@@ -109,6 +110,8 @@ export const api = {
     request<Investigation | null>(`/api/incidents/${enc(id)}/investigations/latest`, { signal }),
   myInvestigations: (signal?: AbortSignal) => request<InvestigationSummary[]>("/api/me/investigations", { signal }),
   deleteMyInvestigations: () => request<{ deleted: number }>("/api/me/investigations", { method: "DELETE" }),
+  /** Reads the user's own account through their read-only role: the alarms that are firing right now. */
+  liveIncidents: (signal?: AbortSignal) => request<LiveIncidents>("/api/me/aws/incidents", { signal }),
   awsConnection: (signal?: AbortSignal) => request<AwsConnection>("/api/me/aws-connection", { signal }),
   saveAwsConnection: (settings: AwsConnectionSettings) =>
     request<AwsConnection>("/api/me/aws-connection", {

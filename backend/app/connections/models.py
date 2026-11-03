@@ -11,9 +11,10 @@ MAX_LOG_GROUPS = 10
 # Commercial-partition regions only. The value ends up in an ARN and, later, in a service host name, so it is a
 # closed shape rather than "anything that looks like a region".
 Region = Annotated[str, StringConstraints(pattern=r"^(us|eu|ap|sa|ca|me|af|il|mx)-[a-z]+-\d$")]
-# A CloudWatch log group name, or a prefix ending in one `*`. No ':' (it would end the name inside an ARN), no spaces,
-# no '$' or '{' (the name is placed inside a CloudFormation Fn::Sub string).
-LogGroupName = Annotated[str, StringConstraints(pattern=r"^/?[A-Za-z0-9_.#/-]{3,200}\*?$")]
+# An exact CloudWatch log group name. No wildcard (searching a log group needs its exact name, and finding groups by
+# prefix would need another account-wide permission), no ':' (it would end the name inside an ARN), no spaces, no '$'
+# or '{' (the name is placed inside a CloudFormation Fn::Sub string).
+LogGroupName = Annotated[str, StringConstraints(pattern=r"^/?[A-Za-z0-9_.#/-]{3,200}$")]
 # The role AgentOps's own template creates, in some account: nothing else is accepted.
 RoleArn = Annotated[str, StringConstraints(pattern=rf"^arn:aws:iam::\d{{12}}:role/{ROLE_NAME}$")]
 
@@ -37,6 +38,8 @@ class AwsConnection(BaseModel):
     consent_provider: str
     consented_at: datetime
     updated_at: datetime
+    # When AgentOps last used the role successfully. Cleared whenever the role or what it covers changes.
+    verified_at: datetime | None = None
 
 
 class ConnectionSettings(BaseModel):
@@ -93,7 +96,6 @@ class ConnectionView(BaseModel):
     status: Literal["not_connected", "draft", "registered"] = "not_connected"
     region: str | None = None
     log_groups: list[str] = Field(default_factory=list)
-    log_groups_use_wildcard: bool = False
     role_arn: str | None = None
     external_id: str | None = None
     consent_current: bool = False
@@ -101,3 +103,4 @@ class ConnectionView(BaseModel):
     permissions: list[PermissionView] = Field(default_factory=list)
     setup: SetupView | None = None
     updated_at: datetime | None = None
+    verified_at: datetime | None = None
