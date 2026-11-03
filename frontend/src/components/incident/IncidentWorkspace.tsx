@@ -42,9 +42,16 @@ export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
   }
 
   const incident = w.incident;
+  const live = incident.id.startsWith("LIVE-");
 
   return (
     <div className="space-y-4">
+      {live && (
+        <p role="note" className="rounded border border-accent/40 bg-accent/10 px-3 py-2 text-sm">
+          <strong className="font-medium">Your AWS account (live).</strong> This is real data, read through your
+          read-only role. AgentOps cannot change anything there, so it suggests next steps but offers no action to run.
+        </p>
+      )}
       <header className="rounded-lg border border-border bg-surface p-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-xs text-muted">{incident.id}</span>
@@ -98,12 +105,14 @@ export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
             busy={w.busy}
             onSend={(helpful, comment) => void w.sendFeedback(helpful, comment)}
           />
-          <RemediationPanel
-            investigation={w.investigation}
-            busy={w.busy}
-            onApprove={() => void w.approve()}
-            onReject={() => void w.reject()}
-          />
+          {!live && (
+            <RemediationPanel
+              investigation={w.investigation}
+              busy={w.busy}
+              onApprove={() => void w.approve()}
+              onReject={() => void w.reject()}
+            />
+          )}
         </div>
         <Timeline events={w.timeline} />
       </div>

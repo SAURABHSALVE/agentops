@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 import { friendlyError } from "@/lib/plain";
-import type { AwsConnection } from "@/lib/types";
+import type { AwsConnection, LiveIncidents } from "@/lib/types";
 import { useAuth } from "@/lib/use-auth";
 
 type Load = { state: "loading" } | { state: "error"; message: string } | { state: "ready"; connection: AwsConnection };
@@ -71,8 +73,8 @@ export function ConnectAws() {
           at any time. No access keys are ever shared.
         </p>
         <p className="mt-2 rounded border border-border bg-surface px-3 py-2 text-sm">
-          <strong className="font-medium">Setup only, for now.</strong> This page saves your choices and prepares the
-          read-only role. AgentOps does not read anything from your account yet, and it has not tested your role.
+          <strong className="font-medium">Nothing is read until you ask.</strong> Once your role is saved, press
+          &quot;Check my alarms&quot; to see what is firing. AgentOps only ever reads, and only from your account.
         </p>
       </div>
 
@@ -150,6 +152,7 @@ function Workflow({ connection, onChange }: { connection: AwsConnection; onChang
         <>
           <StepTwo connection={connection} />
           <StepThree connection={connection} onChange={onChange} />
+          {connection.status === "registered" && <LiveAlarms onChecked={onChange} />}
           <Disconnect onChange={onChange} />
         </>
       )}
@@ -254,15 +257,9 @@ function StepOne({ connection, onChange }: { connection: AwsConnection; onChange
             className="mt-1 w-full rounded border border-border bg-surface-2 px-2 py-1.5 font-mono text-sm"
           />
           <p className="mt-1 text-xs text-muted">
-            Exact names, or a prefix ending in <span className="font-mono">*</span> such as{" "}
-            <span className="font-mono">/aws/lambda/checkout-*</span>. Only these groups can be searched.
+            Exact names, as they appear in CloudWatch. Only these groups can be searched, and a group created later
+            is not covered until you add it here.
           </p>
-          {connection.log_groups_use_wildcard && (
-            <p className="mt-1 text-xs text-muted">
-              A prefix with <span className="font-mono">*</span> covers every group that starts with it, including ones
-              created later.
-            </p>
-          )}
         </div>
 
         {consent && (
@@ -476,8 +473,77 @@ function StepThree({ connection, onChange }: { connection: AwsConnection; onChan
       {connection.status === "registered" && connection.role_arn && (
         <p role="status" className="mt-3 text-sm">
           Saved <span className="font-mono">{connection.role_arn}</span>.{" "}
-          <span className="text-muted">Not tested yet: AgentOps has not used this role, so it cannot say it works.</span>
+          {connection.verified_at ? (
+            <span className="text-muted">
+              Working: AgentOps used this role successfully on {formatDateTime(connection.verified_at)}.
+            </span>
+          ) : (
+            <span className="text-muted">Not tested yet. Press &quot;Check my alarms&quot; below to try it.</span>
+          )}
         </p>
+      )}
+    </section>
+  );
+}
+
+function LiveAlarms({ onChecked }: { onChecked: (c: AwsConnection) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [result, setResult] = useState<LiveIncidents | null>(null);
+
+  async function check() {
+    setBusy(true);
+    setProblem(null);
+    try {
+      setResult(await api.liveIncidents());
+      onChecked(await api.awsConnection()); // the role worked, so the page can say so
+    } catch (e) {
+      setResult(null);
+      setProblem(problemText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section aria-labelledby="alarms-heading" className="rounded-lg border border-border bg-surface p-4">
+      <h2 id="alarms-heading" className="text-sm font-semibold">
+        Your AWS account (live) · alarms that are firing
+      </h2>
+      <p className="mt-1 text-sm text-muted">
+        This is real data from your own account, read through the role you created. Nothing is changed there.
+      </p>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void check()}
+        className="mt-3 rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg disabled:opacity-50"
+      >
+        {busy ? "Checking…" : "Check my alarms"}
+      </button>
+      {problem && (
+        <p role="alert" className="mt-2 text-sm text-danger">
+          {problem}
+        </p>
+      )}
+      {result && result.incidents.length === 0 && (
+        <p role="status" className="mt-3 text-sm">
+          No alarms are firing in {result.region} right now.
+        </p>
+      )}
+      {result && result.incidents.length > 0 && (
+        <ul aria-label="Firing alarms" className="mt-3 divide-y divide-border rounded border border-border">
+          {result.incidents.map((i) => (
+            <li key={i.id} className="p-3">
+              <Link href={`/live/?id=${encodeURIComponent(i.id)}`} className="font-medium underline">
+                {i.title}
+              </Link>
+              <p className="mt-0.5 text-xs text-muted">
+                {i.service} · since {formatDateTime(i.started_at)}
+              </p>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );
