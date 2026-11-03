@@ -61,7 +61,9 @@ def build_metrics_result_from_values(
     lead = [v for ts, v in values if ts < incident.started_at]
     window = [(ts, v) for ts, v in values if ts >= incident.started_at]
     baseline = round(sum(lead) / len(lead), 2)
-    elevated = [(ts, v) for ts, v in window if v >= ELEVATED_FACTOR * baseline]
+    # `v > 0` matters for a metric whose normal level is zero (errors, say): there, "at least twice nothing" would
+    # count every quiet minute as elevated.
+    elevated = [(ts, v) for ts, v in window if v > 0 and v >= ELEVATED_FACTOR * baseline]
 
     buckets: dict[int, float] = {}
     for ts, v in values:

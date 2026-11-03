@@ -40,8 +40,38 @@ retrieved and lowers any confidence they do not support, so check both before yo
 """
 
 
-def system_prompt() -> str:
-    """The base rules plus the server-side remediation allowlist, so the model can only propose real actions."""
+_SIMULATED_INTRO = (
+    "an incident investigator for a SIMULATED demo environment. Investigate one incident using only "
+    "the provided read-only tools"
+)
+_REMEDIATION_RULE = (
+    "- remediation_action_id may only be set when you are at least medium confident. You only recommend; "
+    "a human must approve any action, and the system decides whether the action is allowed.\n"
+)
+assert _SIMULATED_INTRO in SYSTEM_PROMPT and _REMEDIATION_RULE in SYSTEM_PROMPT  # noqa: S101 - import-time guard
+
+LIVE_SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
+    _SIMULATED_INTRO,
+    "an incident investigator for a REAL AWS account whose owner connected it read-only. The incident is one of "
+    "their CloudWatch alarms. Investigate it using only the provided read-only tools (the alarm's metric, log lines "
+    "from the log groups they chose, and recent CloudTrail change events)",
+).replace(
+    _REMEDIATION_RULE,
+    "- AgentOps cannot change anything in this account, so set remediation_action_id to null. Put what a human "
+    "should check or change in recommended_next_step.\n",
+)
+
+
+def system_prompt(live: bool = False) -> str:
+    """The base rules plus the server-side remediation allowlist, so the model can only propose real actions.
+
+    For an incident from a real account there is no allowlist: nothing can be done there, so the answer carries none.
+    """
+    if live:
+        return (
+            f"{LIVE_SYSTEM_PROMPT}\nThere are no remediation actions for this incident: "
+            "remediation_action_id must be null.\n"
+        )
     actions = "\n".join(
         f"- {spec.action_id} (only for: {', '.join(sorted(spec.applicable_services))}): {spec.description}"
         for spec in REMEDIATIONS.values()

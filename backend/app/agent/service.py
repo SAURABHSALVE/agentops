@@ -26,8 +26,16 @@ from app.agent.store import InvestigationStore
 from app.agent.timeline import effective_status, events_for
 from app.agent.tools import ToolRunner
 from app.config import Settings
-from app.errors import AgentOpsError, FeedbackNotAllowedError, InvestigationInProgressError, RemediationStateError
+from app.diagnostics import Diagnostics
+from app.errors import (
+    AgentOpsError,
+    FeedbackNotAllowedError,
+    IncidentNotFoundError,
+    InvestigationInProgressError,
+    RemediationStateError,
+)
 from app.identity import ANONYMOUS_OWNER
+from app.live.service import LiveService, is_live_id
 from app.schemas import GetIncidentArgs, IncidentDetail, IncidentSummary, TimelineEvent
 from app.simulator.service import Simulator
 
@@ -46,8 +54,10 @@ class InvestigationService:
         provider: LLMProvider,
         settings: Settings,
         clock: Callable[[], datetime] = _utc_now,
+        live: LiveService | None = None,
     ) -> None:
         self._sim = simulator
+        self._live = live
         self._store = store
         self._provider = provider
         self._clock = clock
@@ -78,17 +88,55 @@ class InvestigationService:
     def _save(self, investigation: Investigation) -> None:
         self._store.save(self._owner, investigation)
 
+    # ---- where an incident's data comes from ---------------------------------------------------
+
+    def _incident(self, incident_id: str) -> IncidentDetail:
+        """The incident, from the shared demo data or (LIVE-...) from this owner's own AWS account."""
+        if is_live_id(incident_id):
+            if self._live is None:
+                raise IncidentNotFoundError("Incident not found.")
+            return self._live.detail(self._owner, incident_id)
+        return self._sim.get_incident(GetIncidentArgs(incident_id=incident_id))
+
+    def _diagnostics(self, incident_id: str) -> Diagnostics:
+        if is_live_id(incident_id):
+            if self._live is None:
+                raise IncidentNotFoundError("Incident not found.")
+            return self._live.diagnostics(self._owner)
+        return self._sim
+
     def start(self, incident_id: str) -> Investigation:
         """Validate the incident and record a running investigation. Cheap; the work is in run()."""
-        self._sim.get_incident(GetIncidentArgs(incident_id=incident_id))
+        if is_live_id(incident_id):
+            # Refused here (409), before any record exists, if the connection, the role or the AI service is not usable.
+            diagnostics = self._diagnostics(incident_id)
+            diagnostics.get_incident(GetIncidentArgs(incident_id=incident_id))
+            diagnostics.prepare()
+        else:
+            self._sim.get_incident(GetIncidentArgs(incident_id=incident_id))
         return self._store.create(self._owner, incident_id, self._provider.info, self._clock())
 
     def run(self, investigation_id: str) -> None:
         """Execute a started investigation to a terminal state. Never raises, never leaves it 'running'."""
         initial = self._store.get(self._owner, investigation_id)
         try:
-            service = self._sim.get_incident(GetIncidentArgs(incident_id=initial.incident_id)).service
-            self._save(self._coordinator.run(initial, service, self._save))
+            diagnostics = self._diagnostics(initial.incident_id)
+            try:
+                diagnostics.prepare()
+            except AgentOpsError as exc:
+                logger.info("investigation %s could not reach its data source: %s", investigation_id, exc.code)
+                self._save(
+                    initial.model_copy(
+                        update={
+                            "status": "failed",
+                            "failure": Failure(code="source_unavailable", message=exc.message),
+                            "finished_at": self._clock(),
+                        }
+                    )
+                )
+                return
+            service = diagnostics.get_incident(GetIncidentArgs(incident_id=initial.incident_id)).service
+            self._save(self._coordinator.run(initial, service, self._save, diagnostics))
         except Exception as exc:
             logger.error("investigation %s crashed: %s", investigation_id, type(exc).__name__)
             latest = self._store.get(self._owner, investigation_id)
@@ -102,12 +150,16 @@ class InvestigationService:
                 )
             )
 
+    def incident(self, incident_id: str) -> IncidentDetail:
+        """The incident as this owner may see it (demo data, or their own live alarm)."""
+        return self._incident(incident_id)
+
     def get(self, investigation_id: str) -> Investigation:
         return self._store.get(self._owner, investigation_id)
 
     def latest(self, incident_id: str) -> Investigation | None:
         """This owner's newest investigation of the incident, or None if they have not run one (not an error)."""
-        self._sim.get_incident(GetIncidentArgs(incident_id=incident_id))
+        self._incident(incident_id)
         return self._store.latest_for(self._owner, incident_id)
 
     # ---- "my investigations" -----------------------------------------------------------------
@@ -115,7 +167,8 @@ class InvestigationService:
     def mine(self) -> list[InvestigationSummary]:
         """This owner's newest investigation of each incident they have investigated, newest first."""
         rows: list[InvestigationSummary] = []
-        for incident in self._sim.list_incidents():
+        live = self._live.known_summaries(self._owner) if self._live is not None else []
+        for incident in [*self._sim.list_incidents(), *live]:
             inv = self._store.latest_for(self._owner, incident.id)
             if inv is None:
                 continue
@@ -138,12 +191,16 @@ class InvestigationService:
         """Delete everything this owner has recorded. Refused while one of their investigations is running."""
         with self._approval_lock:  # nothing is being approved or rated while records disappear
             incident_ids = [i.id for i in self._sim.list_incidents()]
+            if self._live is not None:
+                incident_ids += self._live.all_ids(self._owner)
             for incident_id in incident_ids:
                 latest = self._store.latest_for(self._owner, incident_id)
                 if latest is not None and latest.status == "running":
                     raise InvestigationInProgressError("Wait for the running investigation to finish, then delete.")
             removed = self._store.delete_for_owner(self._owner, incident_ids)
             self._sim.forget_owner(self._owner)
+            if self._live is not None:
+                self._live.forget(self._owner)
             return removed
 
     # ---- incident views --------------------------------------------------------------------
@@ -158,7 +215,7 @@ class InvestigationService:
         return incident.model_copy(update={"status": status}) if status != incident.status else incident
 
     def timeline(self, incident_id: str) -> list[TimelineEvent]:
-        incident = self._sim.get_incident(GetIncidentArgs(incident_id=incident_id))
+        incident = self._incident(incident_id)
         derived = [e for inv in self._store.list_for_incident(self._owner, incident_id) for e in events_for(inv)]
         # Stable sort: the fixture history first at equal timestamps, then investigation order.
         return sorted([*incident.history, *derived], key=lambda e: e.at)

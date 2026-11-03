@@ -97,7 +97,7 @@ def test_a_new_user_sees_what_they_would_agree_to_and_every_permission(on: TestC
         "trusted_account_id": ACCOUNT,
     }
     actions = {a for p in view["permissions"] for a in p["actions"]}
-    assert "logs:StartQuery" in actions and "cloudtrail:LookupEvents" in actions
+    assert "logs:FilterLogEvents" in actions and "cloudtrail:LookupEvents" in actions
     assert not any(a.startswith(("s3:", "dynamodb:", "iam:", "secretsmanager:")) for a in actions)
 
 

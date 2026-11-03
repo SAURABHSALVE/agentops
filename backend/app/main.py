@@ -26,18 +26,25 @@ from app.errors import (
     AwsAccountNotEnabledError,
     AwsConnectionNotSetUpError,
     AwsConnectUnavailableError,
+    AwsReadFailedError,
+    AwsRoleUnreachableError,
     ConsentOutOfDateError,
     FeedbackNotAllowedError,
     IncidentNotFoundError,
     InvalidTokenError,
     InvestigationInProgressError,
     InvestigationNotFoundError,
+    LiveNeedsAiError,
     MetricNotAvailableError,
     RateLimitedError,
     RemediationStateError,
     SignInRequiredError,
     UnauthorizedError,
 )
+from app.live.boto_reader import BotoReaderFactory
+from app.live.reader import ReaderFactory
+from app.live.service import LiveService
+from app.live.store import InMemoryLiveSnapshotStore, LiveSnapshotStore
 from app.repository import InMemoryIncidentRepository
 from app.schemas import ErrorDetail, ErrorResponse
 from app.security import ACCESS_HEADER, AccessGate, KeyedRateLimiter, RateLimiter, load_access_code
@@ -67,6 +74,9 @@ _STATUS_BY_CODE = {
     AwsConnectionNotSetUpError.code: 409,
     AwsAccountNotEnabledError.code: 409,
     ConsentOutOfDateError.code: 409,
+    AwsRoleUnreachableError.code: 409,
+    AwsReadFailedError.code: 409,
+    LiveNeedsAiError.code: 409,
 }
 
 
@@ -96,6 +106,18 @@ def _build_connection_store(settings: Settings) -> ConnectionStore:
     return InMemoryConnectionStore()
 
 
+def _build_live_store(settings: Settings) -> LiveSnapshotStore:
+    if settings.storage_mode == "dynamodb":
+        from app.live.dynamodb_store import DynamoDbLiveSnapshotStore  # keeps boto3 optional locally
+
+        return DynamoDbLiveSnapshotStore.for_table(settings.dynamodb_table)
+    if settings.storage_mode == "local":
+        from app.live.sqlite_store import SqliteLiveSnapshotStore
+
+        return SqliteLiveSnapshotStore(Path(settings.local_data_dir) / "agentops.sqlite3")
+    return InMemoryLiveSnapshotStore()
+
+
 def _build_simulator(settings: Settings) -> Simulator:
     source: TelemetrySource = (
         CapturedSource.load(Path(settings.telemetry_dataset)) if settings.telemetry_dataset else FixtureSource()
@@ -111,6 +133,8 @@ def create_app(
     access: AccessGate | None = None,
     verifier: TokenVerifier | None = None,
     connection_store: ConnectionStore | None = None,
+    live_store: LiveSnapshotStore | None = None,
+    live_readers: ReaderFactory | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
@@ -122,19 +146,25 @@ def create_app(
         ),
     )
     app.state.simulator = simulator or _build_simulator(settings)
-    app.state.investigations = InvestigationService(
-        app.state.simulator, store or _build_store(settings), provider or build_provider(settings), settings
-    )
-
+    provider = provider or build_provider(settings)
     app.state.access = access or AccessGate(load_access_code())
     app.state.verifier = verifier or build_verifier(settings)  # None unless a Cognito user pool is configured
-    info = app.state.investigations.provider_info
+    info = provider.info
     app.state.connections = ConnectionService(
         connection_store or _build_connection_store(settings),
         settings,
         sign_in_on=app.state.verifier is not None,
         provider_kind=info.kind,
         provider_label=info.label,
+    )
+    app.state.live = LiveService(
+        app.state.connections,
+        live_store or _build_live_store(settings),
+        live_readers or BotoReaderFactory(),
+        provider_kind=info.kind,
+    )
+    app.state.investigations = InvestigationService(
+        app.state.simulator, store or _build_store(settings), provider, settings, live=app.state.live
     )
     app.state.limiter = RateLimiter(settings.rate_per_minute, settings.rate_per_hour)
     app.state.user_limiter = KeyedRateLimiter(settings.user_rate_per_minute, settings.user_rate_per_hour)

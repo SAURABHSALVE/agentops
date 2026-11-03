@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.agent.models import EvidenceSource
 from app.agent.provider import ToolSchema
+from app.diagnostics import Diagnostics
 from app.errors import AgentOpsError
 from app.schemas import (
     DeploymentsQuery,
@@ -50,7 +51,7 @@ class ToolSpec:
     name: str
     description: str
     arg_model: type[BaseModel]
-    run: Callable[[Simulator, str, Any], BaseModel]
+    run: Callable[[Diagnostics, str, Any], BaseModel]
     summarize: Callable[[Any], str]
     source: EvidenceSource | None  # what kind of evidence this tool's reference ids are
 
@@ -102,7 +103,8 @@ TOOLS: dict[str, ToolSpec] = {
             name="get_service_metrics",
             description=(
                 "Get one metric time series and summary (baseline, peak, share of window elevated) for this "
-                "incident's service. Not every metric exists for every service."
+                "incident's service. Not every metric exists for every service. For an incident from a connected AWS "
+                "account the only metric is alarm_metric, the one its alarm watches."
             ),
             arg_model=MetricsQuery,
             run=lambda sim, iid, a: sim.get_service_metrics(GetMetricsArgs(incident_id=iid, **a.model_dump())),
@@ -183,7 +185,10 @@ class ToolRunner:
             reference_sources={},
         )
 
-    def run(self, incident_id: str, raw_name: str, raw_arguments: str) -> ToolOutcome:
+    def run(
+        self, incident_id: str, raw_name: str, raw_arguments: str, diagnostics: Diagnostics | None = None
+    ) -> ToolOutcome:
+        """Run one requested tool. `diagnostics` is where the answers come from (default: the demo simulator)."""
         started = time.perf_counter()
         name = safe_tool_name(raw_name)
         spec = TOOLS.get(raw_name)
@@ -204,7 +209,7 @@ class ToolRunner:
             return self._fail(name, {}, "invalid_arguments", _describe_validation_error(exc), started)
         shown: dict[str, str | int] = {k: v for k, v in args.model_dump(mode="json").items() if v is not None}
 
-        future = self._pool.submit(spec.run, self._sim, incident_id, args)
+        future = self._pool.submit(spec.run, diagnostics or self._sim, incident_id, args)
         try:
             result = future.result(timeout=self._timeout)
         except FutureTimeout:

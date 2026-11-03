@@ -7,7 +7,7 @@ from its own allowlist.
 
 from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from app.schemas import ActionResult, IncidentId, VerificationResult
 
@@ -21,6 +21,7 @@ FailureCode = Literal[
     "invalid_output",
     "ungrounded_evidence",
     "remediation_not_allowed",
+    "source_unavailable",
     "internal_error",
 ]
 InvestigationId = Annotated[str, StringConstraints(pattern=r"^inv-\d{4,}$")]
@@ -175,7 +176,16 @@ class Investigation(_Model):
     remediation_state: RemediationRecord | None = None
     usage: Usage = Usage()
     feedback: Feedback | None = None
-    simulated: Literal[True] = True
+    # False when the data came from the user's own AWS account (a LIVE-... incident). Derived from the incident id, so a
+    # record can never claim to be simulated while reading a real account, or the other way round.
+    simulated: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _simulated_follows_the_incident(cls, data: object) -> object:
+        if isinstance(data, dict):
+            return {**data, "simulated": not str(data.get("incident_id", "")).startswith("LIVE-")}
+        return data
 
 
 class InvestigationSummary(_Model):
