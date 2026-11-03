@@ -384,3 +384,94 @@ def test_agent_provider_and_model_are_validated() -> None:
     for bad in ({"agentProvider": "bedrock"}, {"agentProvider": "openai", "openaiModel": "../x"}):
         with pytest.raises(ConfigError):
             stage_config(_ctx(stage="dev", alertEmail=EMAIL, **bad))
+
+
+# ---- connecting a user's own AWS account (opt-in: -c awsConnect=on) --------------------------------------
+
+
+def _function_role(built: Built) -> dict[str, Any]:
+    return dict(
+        next(
+            r["Properties"]
+            for r in built.backend.find_resources("AWS::IAM::Role").values()
+            if r["Properties"].get("RoleName") is not None
+        )
+    )
+
+
+def _all_actions(built: Built) -> set[str]:
+    out: set[str] = set()
+    for s in statements(built.backend):
+        out |= set(s["Action"] if isinstance(s["Action"], list) else [s["Action"]])
+    return out
+
+
+def test_by_default_nothing_about_connecting_accounts_is_deployed(dev: Built) -> None:
+    assert not any(k.startswith("AWS_CONNECT") for k in lambda_env(dev))
+    assert "sts:AssumeRole" not in _all_actions(dev)
+    assert not any("RoleName" in r["Properties"] for r in dev.backend.find_resources("AWS::IAM::Role").values())
+
+
+def test_connecting_adds_one_permission_assume_exactly_the_users_role_in_this_account(connect: Built) -> None:
+    assume = [s for s in statements(connect.backend) if "sts:AssumeRole" in s["Action"]]
+    assert len(assume) == 1
+    assert assume[0]["Action"] == "sts:AssumeRole" and assume[0]["Effect"] == "Allow"
+    assert assume[0]["Resource"] == f"arn:aws:iam::{ACCOUNT}:role/AgentOpsReadOnly"
+    # Everything else the function may do is what it could do before: logs, the table, nothing from Secrets Manager.
+    assert _all_actions(connect) - {"sts:AssumeRole"} == _all_actions_without_connect()
+
+
+def _all_actions_without_connect() -> set[str]:
+    return {"dynamodb:DeleteItem", "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"}
+
+
+def test_the_function_runs_as_a_named_role_that_users_trust_by_arn(connect: Built) -> None:
+    role = _function_role(connect)
+    assert role["RoleName"] == "agentops-dev-api"
+    assert role["AssumeRolePolicyDocument"]["Statement"][0]["Principal"] == {"Service": "lambda.amazonaws.com"}
+    assert [m["Fn::Join"][1][-1] for m in role["ManagedPolicyArns"]] == [
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+    ]
+    env = lambda_env(connect)
+    assert env["AWS_CONNECT_ACCOUNT_ID"] == ACCOUNT
+    assert "ApiRole" in json.dumps(env["AWS_CONNECT_PRINCIPAL_ARN"]), "the trust points at the function's own role"
+    assert "AWS_CONNECT_ALLOWED_ACCOUNTS" not in env, "unset means: only this account"
+
+
+def test_more_accounts_are_a_deliberate_list_each_with_the_fixed_role_name(connect_two: Built) -> None:
+    assume = next(s for s in statements(connect_two.backend) if "sts:AssumeRole" in s["Action"])
+    assert assume["Resource"] == [
+        "arn:aws:iam::111122223333:role/AgentOpsReadOnly",
+        "arn:aws:iam::444455556666:role/AgentOpsReadOnly",
+    ]
+    assert lambda_env(connect_two)["AWS_CONNECT_ALLOWED_ACCOUNTS"] == "111122223333,444455556666"
+
+
+def test_the_role_name_matches_the_one_the_backend_template_creates() -> None:
+    models = Path(__file__).resolve().parents[2] / "backend" / "app" / "connections" / "models.py"
+    backend_name = re.search(r'^ROLE_NAME = "([^"]+)"', models.read_text(encoding="utf-8"), re.MULTILINE)
+    assert backend_name is not None
+    from agentops_infra.backend_stack import ROLE_NAME
+
+    assert ROLE_NAME == backend_name.group(1)
+
+
+@pytest.mark.parametrize(
+    "ctx",
+    [
+        {"awsConnect": "maybe"},
+        {"awsConnect": "on", "auth": "none"},
+        {"awsConnect": "on", "connectAccounts": "123"},
+        {"awsConnect": "on", "connectAccounts": "111122223333,*"},
+        {"awsConnect": "off", "connectAccounts": "111122223333"},
+    ],
+)
+def test_connect_settings_are_validated(ctx: dict[str, str]) -> None:
+    with pytest.raises(ConfigError):
+        stage_config(_ctx(stage="dev", alertEmail=EMAIL, **ctx))
+
+
+def test_connect_settings_parse() -> None:
+    cfg = stage_config(_ctx(stage="dev", alertEmail=EMAIL, awsConnect="on", connectAccounts="111122223333"))
+    assert cfg.aws_connect and cfg.connect_accounts == ("111122223333",)
+    assert not stage_config(_ctx(stage="dev", alertEmail=EMAIL)).aws_connect
