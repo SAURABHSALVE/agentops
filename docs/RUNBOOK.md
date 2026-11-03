@@ -119,3 +119,5 @@ not investigated. A role that stops working shows "AgentOps could not use the ro
 stack from the template on the Connect page.
 To try it locally: run the backend with sign-in on (see the Sign-in section) and those variables, or run
 `AUTH=1 node scripts/e2e-ui.mjs`, which starts a fake sign-in and switches the feature on.
+
+In CI the switch is the repository variable `AWS_CONNECT` (`on`/`off`, default off) and, optionally, `CONNECT_ACCOUNTS`. Setting `AWS_CONNECT=on` changes IAM, so apply it with a manual run of the Deploy workflow with *allow_iam_changes* ticked; a normal push fails safe at the IAM check instead. Turn it off by deleting the variable and running Deploy again (the users' roles stay in their own accounts until they delete their stacks).

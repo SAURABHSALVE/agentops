@@ -76,10 +76,12 @@ jobs:
           ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
           AGENT_PROVIDER: ${{ vars.AGENT_PROVIDER || 'mock' }} # diff what a deploy would really do
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
+          AWS_CONNECT: ${{ vars.AWS_CONNECT || 'off' }}
+          CONNECT_ACCOUNTS: ${{ vars.CONNECT_ACCOUNTS }}
         run: |
           echo "::add-mask::$ALERT_EMAIL" # repository variables are not masked in logs by default
           # --no-change-set: compare templates only, which the read-only role can do. A change set needs deploy rights.
-          npx cdk diff 'AgentOps-prod-*' -c stage=prod -c "alertEmail=$ALERT_EMAIL" -c "agentProvider=$AGENT_PROVIDER" -c "openaiModel=$OPENAI_MODEL" --no-change-set 2>&1 | tee diff.txt
+          npx cdk diff 'AgentOps-prod-*' -c stage=prod -c "alertEmail=$ALERT_EMAIL" -c "agentProvider=$AGENT_PROVIDER" -c "openaiModel=$OPENAI_MODEL" -c "awsConnect=$AWS_CONNECT" -c "connectAccounts=$CONNECT_ACCOUNTS" --no-change-set 2>&1 | tee diff.txt
           {
             echo '### cdk diff (production)'
             echo '```'

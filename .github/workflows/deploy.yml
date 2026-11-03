@@ -87,10 +87,16 @@ jobs:
           # `broadening` makes the deploy fail (not prompt) if IAM or network access would widen, so a pipeline
           # cannot silently grant itself more. Re-run manually with the input above after reviewing the change.
           APPROVAL: ${{ inputs.allow_iam_changes && 'never' || 'broadening' }}
+          # "off" unless the repository variable AWS_CONNECT is "on" (needs sign-in): lets signed-in users connect their
+          # own AWS account read-only. It changes IAM (a named function role and sts:AssumeRole), so switching it needs
+          # a manual run with the input above. CONNECT_ACCOUNTS (optional, comma-separated) widens it past this account.
+          AWS_CONNECT: ${{ vars.AWS_CONNECT || 'off' }}
+          CONNECT_ACCOUNTS: ${{ vars.CONNECT_ACCOUNTS }}
         run: |
           echo "::add-mask::$ALERT_EMAIL"
           npx cdk deploy 'AgentOps-prod-*' -c stage=prod -c "alertEmail=$ALERT_EMAIL" \
             -c "agentProvider=$AGENT_PROVIDER" -c "openaiModel=$OPENAI_MODEL" \
+            -c "awsConnect=$AWS_CONNECT" -c "connectAccounts=$CONNECT_ACCOUNTS" \
             --require-approval "$APPROVAL" --outputs-file ../cdk-outputs.json --progress events
       - name: Smoke test the live site
         working-directory: .
