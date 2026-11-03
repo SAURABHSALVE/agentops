@@ -18,6 +18,7 @@ _SUBJECT_PREFIX = re.compile(r"^repo:([A-Za-z0-9-]+)(?:@\d+)?/([A-Za-z0-9._-]+)(
 _MODEL = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 AGENT_PROVIDERS = ("mock", "openai")
 AUTH_MODES = ("cognito", "none")
+_ACCOUNT = re.compile(r"^\d{12}$")
 
 
 class ConfigError(ValueError):
@@ -36,6 +37,13 @@ class StageConfig:
     # "cognito" (default) adds the sign-in user pool: writes need a signed-in user and records are per user.
     # "none" deploys the open demo as it was before sign-in. Choose with: -c auth=none
     auth: str = "cognito"
+    # Off by default. "on" lets signed-in users connect their own AWS account (read-only, through a role they create):
+    # the Lambda gets a fixed named role and may call sts:AssumeRole on `AgentOpsReadOnly` in the accounts below, and
+    # nothing else. Needs sign-in. Opt in with: -c awsConnect=on
+    aws_connect: bool = False
+    # Accounts whose role may be assumed. Empty means only the account AgentOps itself runs in (the first rollout).
+    # Widen with: -c connectAccounts=ACCOUNT_ID,ACCOUNT_ID
+    connect_accounts: tuple[str, ...] = ()
 
     @property
     def sign_in(self) -> bool:
@@ -82,8 +90,20 @@ def stage_config(scope: Construct) -> StageConfig:
     auth = _context(scope, "auth") or "cognito"
     if auth not in AUTH_MODES:
         raise ConfigError("auth must be 'cognito' or 'none'.")
+    connect = (_context(scope, "awsConnect") or "off").lower()
+    if connect not in ("on", "off"):
+        raise ConfigError("awsConnect must be 'on' or 'off'.")
+    accounts = tuple(a.strip() for a in (_context(scope, "connectAccounts") or "").split(",") if a.strip())
+    if any(not _ACCOUNT.match(a) for a in accounts):
+        raise ConfigError("connectAccounts must be a comma-separated list of 12-digit AWS account ids.")
+    if connect == "on" and auth != "cognito":
+        raise ConfigError("awsConnect=on needs sign-in: a connection belongs to one signed-in user (use auth=cognito).")
+    if accounts and connect != "on":
+        raise ConfigError("connectAccounts only applies together with awsConnect=on.")
     return StageConfig(
         auth=auth,
+        aws_connect=connect == "on",
+        connect_accounts=accounts,
         stage=stage,
         alert_email=email,
         budget_limit_usd=int(raw_limit),

@@ -64,6 +64,13 @@ def acknowledge_backend(stack: BackendStack) -> None:
         _BASIC_EXECUTION,
         "AWSLambdaBasicExecutionRole is the AWS-managed policy that grants only CloudWatch Logs writes.",
     )
+    if stack.role is not None:
+        _ack(
+            stack.role,
+            _BASIC_EXECUTION,
+            "AWSLambdaBasicExecutionRole is the AWS-managed policy that grants only CloudWatch Logs writes. "
+            "The role is named (not generated) so users' read-only roles can trust it by ARN.",
+        )
     _ack(
         stack.function,
         "AwsSolutions-L1",

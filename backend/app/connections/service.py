@@ -160,11 +160,11 @@ class ConnectionService:
             status=connection.status,
             region=connection.region,
             log_groups=list(connection.log_groups),
-            log_groups_use_wildcard=any(g.endswith("*") for g in connection.log_groups),
             role_arn=connection.role_arn,
             external_id=connection.external_id,
             consent_current=self._consent_current(connection),
             updated_at=connection.updated_at,
+            verified_at=connection.verified_at,
         )
 
     # ---- the steps ----------------------------------------------------------------------------
@@ -195,6 +195,7 @@ class ConnectionService:
                 consent_provider=self._provider_kind,
                 consented_at=existing.consented_at if existing is not None and keep_consent else now,
                 updated_at=now,
+                verified_at=existing.verified_at if existing is not None and unchanged else None,
             ),
         )
         return self.view(owner)
@@ -211,10 +212,35 @@ class ConnectionService:
         if request.role_arn.split(":")[4] not in self._allowed:
             raise AwsAccountNotEnabledError("That AWS account is not enabled for connecting on this site yet.")
         registered = connection.model_copy(
-            update={"status": "registered", "role_arn": request.role_arn, "updated_at": self._now()}
+            update={
+                "status": "registered",
+                "role_arn": request.role_arn,
+                "updated_at": self._now(),
+                "verified_at": None,
+            }
         )
         self._store.put(owner, registered)
         return self.view(owner)
+
+    # ---- using the connection (Phase 16B) -----------------------------------------------------------
+
+    def feature_available(self, owner: str) -> bool:
+        """Whether this owner may use the feature at all here (configured, sign-in on, and they are signed in)."""
+        return self._unavailable(owner) is None
+
+    def readable(self, owner: str) -> AwsConnection:
+        """The connection to read from: switched on, agreed to in the current wording, and the role registered."""
+        self._require(owner)
+        connection = self._saved(owner)
+        if connection.status != "registered" or connection.role_arn is None:
+            raise AwsConnectionNotSetUpError("Add the ARN of the role you created first (step 3).")
+        return connection
+
+    def mark_verified(self, owner: str, connection: AwsConnection) -> None:
+        """Record that the role worked just now (only if the connection is still the one that was used)."""
+        current = self._store.get(owner)
+        if current is not None and current.role_arn == connection.role_arn and current.region == connection.region:
+            self._store.put(owner, current.model_copy(update={"verified_at": self._now()}))
 
     def disconnect(self, owner: str) -> ConnectionView:
         self._require(owner)

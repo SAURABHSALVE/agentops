@@ -8,11 +8,15 @@ from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
-IncidentId = Annotated[str, StringConstraints(pattern=r"^INC-\d{4}$")]
+# INC-nnnn: simulated or captured demo data, shared. LIVE-xxxxxxxxxxxx: an alarm in one user's own connected AWS
+# account, visible only to that user (app/live).
+IncidentId = Annotated[str, StringConstraints(pattern=r"^(INC-\d{4}|LIVE-[0-9a-f]{12})$")]
 Severity = Literal["critical", "high", "medium", "low"]
 IncidentStatus = Literal["open", "investigating", "mitigated", "resolved"]
 LogLevel = Literal["DEBUG", "INFO", "WARN", "ERROR"]
-MetricName = Literal["error_rate", "p99_latency_ms", "p95_latency_ms", "db_query_p95_ms", "queue_depth"]
+MetricName = Literal[
+    "error_rate", "p99_latency_ms", "p95_latency_ms", "db_query_p95_ms", "queue_depth", "alarm_metric"
+]  # alarm_metric: the one metric a connected AWS account's alarm watches (live incidents only)
 ChangeType = Literal["code", "config", "dependency", "docs"]
 
 

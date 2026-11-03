@@ -34,9 +34,24 @@ class Built:
     auth: Template | None = None  # None when built with auth="none"
 
 
-def build(stage: str, backend_dir: Path, agent_provider: str = "mock", auth: str = "cognito") -> Built:
+def build(
+    stage: str,
+    backend_dir: Path,
+    agent_provider: str = "mock",
+    auth: str = "cognito",
+    aws_connect: bool = False,
+    connect_accounts: tuple[str, ...] = (),
+) -> Built:
     app = cdk.App()
-    cfg = StageConfig(stage=stage, alert_email=EMAIL, budget_limit_usd=10, agent_provider=agent_provider, auth=auth)
+    cfg = StageConfig(
+        stage=stage,
+        alert_email=EMAIL,
+        budget_limit_usd=10,
+        agent_provider=agent_provider,
+        auth=auth,
+        aws_connect=aws_connect,
+        connect_accounts=connect_accounts,
+    )
     data = DataStack(app, "Data", cfg=cfg, env=ENV)
     auth_stack = AuthStack(app, "Auth", cfg=cfg, env=ENV) if cfg.sign_in else None
     backend = BackendStack(app, "Backend", cfg=cfg, data=data, auth=auth_stack, backend_dir=backend_dir, env=ENV)
@@ -90,6 +105,17 @@ def oidc() -> Template:
 @pytest.fixture(scope="session")
 def live(fake_backend: Path) -> Built:
     return build("dev", fake_backend, agent_provider="openai")
+
+
+@pytest.fixture(scope="session")
+def connect(fake_backend: Path) -> Built:
+    """Signed-in users may connect their own AWS account (-c awsConnect=on), first rollout: this account only."""
+    return build("dev", fake_backend, aws_connect=True)
+
+
+@pytest.fixture(scope="session")
+def connect_two(fake_backend: Path) -> Built:
+    return build("dev", fake_backend, aws_connect=True, connect_accounts=("111122223333", "444455556666"))
 
 
 @pytest.fixture(scope="session")

@@ -23,12 +23,13 @@ from app.connections.service import ConnectionService
 from app.connections.template import TEMPLATE_FILE
 from app.errors import InvalidTokenError, SignInRequiredError
 from app.identity import ANONYMOUS_OWNER
+from app.live.models import LiveIncidentsView
+from app.live.service import LiveService
 from app.schemas import (
     DeploymentsQuery,
     DeploymentsResult,
     ErrorResponse,
     GetDeploymentsArgs,
-    GetIncidentArgs,
     GetMetricsArgs,
     HealthResponse,
     IncidentDetail,
@@ -44,6 +45,12 @@ from app.security import ACCESS_HEADER
 from app.simulator.service import Simulator
 
 IncidentIdPath = Annotated[str, Path(pattern=r"^INC-\d{4}$", description="Incident id, e.g. INC-1001")]
+
+# Any incident the caller may open: a shared demo one, or (LIVE-...) one from their own connected AWS account. The
+# public diagnostic routes keep the stricter IncidentIdPath: they take no sign-in, so they never serve a real account.
+AnyIncidentIdPath = Annotated[
+    str, Path(pattern=r"^(INC-\d{4}|LIVE-[0-9a-f]{12})$", description="Incident id, e.g. INC-1001 or LIVE-0a1b2c3d4e5f")
+]
 
 InvestigationIdPath = Annotated[str, Path(pattern=r"^inv-\d{4,}$", description="Investigation id, e.g. inv-0001")]
 
@@ -95,6 +102,11 @@ def _investigations(request: Request, owner: str = ANONYMOUS_OWNER) -> Investiga
     return svc.scoped(owner)
 
 
+def _live(request: Request) -> LiveService:
+    svc: LiveService = request.app.state.live
+    return svc
+
+
 def _connections(request: Request) -> ConnectionService:
     svc: ConnectionService = request.app.state.connections
     return svc
@@ -130,9 +142,9 @@ def list_incidents(request: Request, owner: Owner) -> list[IncidentSummary]:
     responses=_ERRORS,
     tags=["incidents"],
 )
-def get_incident(incident_id: IncidentIdPath, request: Request, owner: Owner) -> IncidentDetail:
-    incident = _sim(request).get_incident(GetIncidentArgs(incident_id=incident_id))
-    return _investigations(request, owner).with_status_detail(incident)
+def get_incident(incident_id: AnyIncidentIdPath, request: Request, owner: Owner) -> IncidentDetail:
+    svc = _investigations(request, owner)
+    return svc.with_status_detail(svc.incident(incident_id))
 
 
 @router.get(
@@ -141,7 +153,7 @@ def get_incident(incident_id: IncidentIdPath, request: Request, owner: Owner) ->
     responses=_ERRORS,
     tags=["incidents"],
 )
-def get_timeline(incident_id: IncidentIdPath, request: Request, owner: Owner) -> list[TimelineEvent]:
+def get_timeline(incident_id: AnyIncidentIdPath, request: Request, owner: Owner) -> list[TimelineEvent]:
     """Fixture history plus the caller's own investigations, tool calls, approvals, actions and verifications."""
     return _investigations(request, owner).timeline(incident_id)
 
@@ -190,7 +202,7 @@ def get_deployments(
     dependencies=[Depends(require_access)],
 )
 def start_investigation(
-    incident_id: IncidentIdPath, request: Request, background: BackgroundTasks, owner: SignedInOwner
+    incident_id: AnyIncidentIdPath, request: Request, background: BackgroundTasks, owner: SignedInOwner
 ) -> Investigation:
     """Start an investigation and return immediately; poll the returned id until it is not 'running'."""
     svc = _investigations(request, owner)
@@ -241,6 +253,12 @@ def save_aws_connection(body: ConnectionSettings, request: Request, owner: Signe
     return _connections(request).save_settings(owner, body)
 
 
+@router.get("/api/me/aws/incidents", response_model=LiveIncidentsView, responses=_START_ERRORS, tags=["aws-connection"])
+def live_incidents(request: Request, owner: SignedInOwner) -> LiveIncidentsView:
+    """The alarms firing in the caller's own connected AWS account right now, read through their read-only role."""
+    return _live(request).refresh(owner)
+
+
 @router.get("/api/me/aws-connection/template", responses=_START_ERRORS, tags=["aws-connection"])
 def aws_connection_template(request: Request, owner: SignedInOwner) -> JSONResponse:
     """Step 2: the CloudFormation template that creates the read-only role in the caller's own account."""
@@ -280,7 +298,7 @@ def disconnect_aws(request: Request, owner: SignedInOwner) -> ConnectionView:
     responses=_ERRORS,
     tags=["investigations"],
 )
-def latest_investigation(incident_id: IncidentIdPath, request: Request, owner: Owner) -> Investigation | None:
+def latest_investigation(incident_id: AnyIncidentIdPath, request: Request, owner: Owner) -> Investigation | None:
     """The caller's newest investigation of this incident, or `null` if they have not run one yet.
 
     "Nothing yet" is a normal state, not an error, so it is a 200: a 404 here would show up as a failed request in

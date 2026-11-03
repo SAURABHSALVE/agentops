@@ -127,7 +127,8 @@ export interface Investigation {
   remediation_state: RemediationState | null;
   usage: { rounds: number; tool_calls: number; input_tokens: number; output_tokens: number };
   feedback: Feedback | null;
-  simulated: true;
+  /** False when the data came from the signed-in user's own AWS account (a `LIVE-` incident). */
+  simulated: boolean;
 }
 
 /** One row of "my investigations": the newest run of an incident the signed-in user has investigated. */
@@ -150,8 +151,9 @@ export interface AwsConnection {
   status: "not_connected" | "draft" | "registered";
   region: string | null;
   log_groups: string[];
-  log_groups_use_wildcard: boolean;
   role_arn: string | null;
+  /** When AgentOps last used the role successfully; null until it has. */
+  verified_at: string | null;
   external_id: string | null;
   consent_current: boolean;
   consent: { version: string; points: string[] } | null;
@@ -175,4 +177,12 @@ export interface InvestigationSummary {
   confidence: Confidence | null;
   remediation_status: RemediationStatus | null;
   helpful: boolean | null;
+}
+
+/** The alarms firing in the user's own connected AWS account, as incidents (ids start with `LIVE-`). */
+export interface LiveIncidents {
+  data_source: string;
+  region: string;
+  checked_at: string;
+  incidents: IncidentSummary[];
 }

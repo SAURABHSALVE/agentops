@@ -18,6 +18,7 @@ export function toolSentence(call: Pick<ToolCallRecord, "name" | "arguments">): 
     case "search_logs":
       return a.query ? `Searched the logs for "${String(a.query)}"` : "Searched the logs";
     case "get_service_metrics":
+      if (a.metric === "alarm_metric") return "Checked the metric the alarm watches";
       return a.metric ? `Checked the ${String(a.metric).replace(/_ms$/, "").replaceAll("_", " ")} metric` : "Checked a service metric";
     case "get_recent_deployments":
       return a.hours ? `Looked for releases in the last ${String(a.hours)} hours` : "Looked for recent releases";
@@ -56,6 +57,10 @@ const FAILURE_HELP: Record<string, FailureHelp> = {
     title: "The agent suggested an action that is not on the approved list, so it was blocked.",
     next: "Nothing ran. Run the investigation again.",
   },
+  source_unavailable: {
+    title: "AgentOps could not read your AWS account, so there is nothing to investigate.",
+    next: "Open Connect AWS, check the role, then run the investigation again.",
+  },
   internal_error: {
     title: "Something went wrong on our side, or the server restarted mid-run.",
     next: "Nothing was changed. Run the investigation again.",
@@ -84,6 +89,11 @@ const ERROR_HELP: Record<string, string> = {
   aws_account_not_enabled:
     "That AWS account is not enabled for connecting on this site yet. During the first rollout only the site owner's account can connect.",
   consent_out_of_date: "The wording you agreed to has changed. Read it and agree again.",
+  aws_role_unreachable:
+    "AgentOps could not use the role in your AWS account. Check that the CloudFormation stack finished creating, that the role ARN is the one it shows, and that the stack was made from the template on this page.",
+  aws_read_failed: "AgentOps could not read your AWS account just now. Try again in a minute.",
+  live_needs_ai:
+    "Investigating your own AWS account needs the AI service, which is switched off on this site. You can still see which alarms are firing.",
 };
 
 /** Turn an API error into advice a non-engineer can act on. Falls back to the server's own message. */

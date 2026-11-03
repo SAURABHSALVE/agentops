@@ -98,6 +98,24 @@ class ConsentOutOfDateError(AgentOpsError):
     code = "consent_out_of_date"
 
 
+class AwsRoleUnreachableError(AgentOpsError):
+    """AWS refused to let AgentOps use the user's role (not created yet, wrong ARN, or the trust does not match)."""
+
+    code = "aws_role_unreachable"
+
+
+class AwsReadFailedError(AgentOpsError):
+    """A read from the user's account failed for a reason that is not about the role (throttled, timed out, ...)."""
+
+    code = "aws_read_failed"
+
+
+class LiveNeedsAiError(AgentOpsError):
+    """Investigating a real account needs the AI service; the offline rule-based assistant only knows the demo data."""
+
+    code = "live_needs_ai"
+
+
 class RateLimitedError(AgentOpsError):
     code = "rate_limited"
 
