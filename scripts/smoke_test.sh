@@ -29,8 +29,10 @@ if [ "$auth_mode" = "cognito" ]; then
   echo "6/6 sign-in (cannot sign in from CI, so checking everything short of that)"
 
   code="$(status_of -X POST "$base/api/incidents/INC-1001/investigations")"
-  if [ "$code" != "401" ] || ! grep -q '"sign_in_required"' "$body"; then
-    fail "a write without signing in should be 401 sign_in_required, got $code"
+  # With the live AI on, the shared access code is checked before sign-in, so the refusal is `unauthorized`; either way
+  # an anonymous write must be a 401 refusal.
+  if [ "$code" != "401" ] || ! grep -Eq '"(sign_in_required|unauthorized)"' "$body"; then
+    fail "a write without signing in should be refused with 401 (sign_in_required or unauthorized), got $code"
   fi
   code="$(status_of "$base/api/incidents/INC-1001/investigations/latest")"
   if [ "$code" != "200" ] || [ "$(tr -d '[:space:]' < "$body")" != "null" ]; then
