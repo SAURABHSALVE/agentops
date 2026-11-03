@@ -83,9 +83,20 @@ Personal portfolio project; no formal disclosure process.
 ## Connecting an AWS account (Phase 16)
 Off by default. When on: the user creates the role in their own account from a template they can read first; AgentOps stores
 the role ARN, region, log group names and an ExternalId, never a key. The role can only read alarms, metrics, change events
-and the log groups the user listed (eight actions, pinned by a test). The ExternalId is made by the server, differs per user
+and the log groups the user listed (six actions, pinned by a test). The ExternalId is made by the server, differs per user
 and does not change, so one user cannot make AgentOps use another's role. Only accounts on `AWS_CONNECT_ALLOWED_ACCOUNTS` can
 be registered (default: AgentOps's own). The connection is per signed-in user, never shared, and is removed by Disconnect
-(the user deletes the CloudFormation stack to remove the role itself). Not yet built: assuming the role and reading anything
-(Phase 16B); until then nothing in a real account is read. Redaction (`app/redaction.py`) must sit on that path before any
-live log text reaches a model or a screen.
+(the user deletes the CloudFormation stack to remove the role itself).
+
+Reading (Phase 16B). Only when the user presses "Check my alarms" or starts an investigation of one of their alarms. The
+backend assumes the user's role with their ExternalId for 15 minutes (credentials stay in memory, are never logged or
+stored), and makes only these calls: DescribeAlarms, GetMetricData, FilterLogEvents (on exactly the groups they listed),
+CloudTrail LookupEvents, and STS AssumeRole. A test fails if the reader's source calls anything else. What comes back is
+bounded and masked: log lines pass through `app/redaction.py` before a model, the API or the screen sees them, and a
+search is matched against the masked text so it cannot confirm a secret; CloudTrail contributes only time, event name,
+service and actor (request parameters are never read); AWS error text is never passed on. A real account has no remediation
+at all: a model that names an action is ignored and told so. Investigating needs the AI service (the offline assistant only
+knows the demo incidents), and a role that stops working fails the start with a plain message and records nothing.
+The Lambda gets one new permission, `sts:AssumeRole` on `AgentOpsReadOnly` in the allowed accounts, and runs as a named role
+that each user's trust policy points at (so no other principal in the account can use the trust). Off unless deployed with
+`-c awsConnect=on`.
