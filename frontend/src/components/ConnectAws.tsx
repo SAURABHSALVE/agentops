@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "@/lib/api";
+import { AccessCode } from "./AccessCode";
 import { formatDateTime } from "@/lib/format";
 import { friendlyError } from "@/lib/plain";
 import type { AwsConnection, LiveIncidents } from "@/lib/types";
@@ -48,7 +49,18 @@ export function ConnectAws() {
   const auth = useAuth();
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [reloads, setReloads] = useState(0);
+  // Sites that protect writes with a shared access code need it here too, or saving anything is refused.
+  const [needsCode, setNeedsCode] = useState(false);
   const ready = auth.status === "signed_in" || auth.status === "off";
+
+  useEffect(() => {
+    const ctl = new AbortController();
+    api
+      .config(ctl.signal)
+      .then((c) => setNeedsCode(c.write_access === "code_required"))
+      .catch(() => undefined); // optional: the page works without it
+    return () => ctl.abort();
+  }, []);
 
   useEffect(() => {
     if (!ready) return;
@@ -130,6 +142,10 @@ export function ConnectAws() {
         <p className="rounded-lg border border-border bg-surface p-5 text-sm text-muted">
           {load.connection.reason ? UNAVAILABLE[load.connection.reason] : "Not available."}
         </p>
+      )}
+
+      {ready && needsCode && load.state === "ready" && load.connection.available && (
+        <AccessCode onSaved={() => setReloads((n) => n + 1)} />
       )}
 
       {ready && load.state === "ready" && load.connection.available && (
