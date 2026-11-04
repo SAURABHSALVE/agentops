@@ -100,3 +100,10 @@ knows the demo incidents), and a role that stops working fails the start with a 
 The Lambda gets one new permission, `sts:AssumeRole` on `AgentOpsReadOnly` in the allowed accounts, and runs as a named role
 that each user's trust policy points at (so no other principal in the account can use the trust). Off unless deployed with
 `-c awsConnect=on`.
+
+### Many users (Phase 17)
+Any account may connect when deployed with `-c connectAccounts=any`: the Lambda may assume the role named `AgentOpsReadOnly` in any
+account, and only that name. A user's role still trusts only this app's function role and only with that user's own ExternalId, so
+another user cannot use it. Use it together with an invitation (the shared access code, shown once per signed-in user), the daily
+investigation caps (per user and for the site, kept in DynamoDB) and an OpenAI project spend limit, because every investigation
+costs money and open sign-up lets anyone try. Change the access code to stop new invitations; people already invited stay invited.

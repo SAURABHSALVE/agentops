@@ -121,3 +121,12 @@ To try it locally: run the backend with sign-in on (see the Sign-in section) and
 `AUTH=1 node scripts/e2e-ui.mjs`, which starts a fake sign-in and switches the feature on.
 
 In CI the switch is the repository variable `AWS_CONNECT` (`on`/`off`, default off) and, optionally, `CONNECT_ACCOUNTS`. Setting `AWS_CONNECT=on` changes IAM, so apply it with a manual run of the Deploy workflow with *allow_iam_changes* ticked; a normal push fails safe at the IAM check instead. Turn it off by deleting the variable and running Deploy again (the users' roles stay in their own accounts until they delete their stacks).
+
+## Opening it to many users (Phase 17)
+In GitHub, Settings, Secrets and variables, Actions, Variables (then run Deploy by hand with *allow_iam_changes* ticked):
+- `CONNECT_ACCOUNTS` = `any` lets every user connect their own account (no per-account approval). A list of account ids still works.
+- `USER_DAILY_CAP` (default 10) and `DAILY_CAP` (default 300): investigations per user and for the whole site each day while the live
+  AI is on. `0` means no cap. They reset at midnight UTC and are counted in DynamoDB.
+- Give invited people the access code from Secrets Manager (`AccessCode...`). They enter it once; to stop new invitations, change the
+  secret's value. Also set a monthly spend limit on the OpenAI project: it is the final cost control.
+Before inviting many people: run a few investigations yourself, and watch the Lambda errors, throttles and p95 alarms for a day.
