@@ -157,7 +157,7 @@ def test_api_is_throttled_and_uses_the_default_stage(dev: Built) -> None:
         {
             "StageName": "$default",
             "AutoDeploy": True,
-            "DefaultRouteSettings": {"ThrottlingRateLimit": 10, "ThrottlingBurstLimit": 20},
+            "DefaultRouteSettings": {"ThrottlingRateLimit": 25, "ThrottlingBurstLimit": 50},
         },
     )
 
@@ -475,3 +475,33 @@ def test_connect_settings_parse() -> None:
     cfg = stage_config(_ctx(stage="dev", alertEmail=EMAIL, awsConnect="on", connectAccounts="111122223333"))
     assert cfg.aws_connect and cfg.connect_accounts == ("111122223333",)
     assert not stage_config(_ctx(stage="dev", alertEmail=EMAIL)).aws_connect
+
+
+# ---- many users: any account, and daily caps -----------------------------------------------------------
+
+
+def test_any_account_is_a_single_wildcard_role_name_not_a_wildcard_action(connect_any: Built) -> None:
+    assume = next(s for s in statements(connect_any.backend) if "sts:AssumeRole" in s["Action"])
+    assert assume["Action"] == "sts:AssumeRole"
+    assert assume["Resource"] == "arn:aws:iam::*:role/AgentOpsReadOnly"  # only that one fixed role name, in any account
+    assert lambda_env(connect_any)["AWS_CONNECT_ALLOWED_ACCOUNTS"] == "*"
+
+
+def test_any_is_accepted_alone_and_means_a_star() -> None:
+    cfg = stage_config(_ctx(stage="dev", alertEmail=EMAIL, awsConnect="on", connectAccounts="any"))
+    assert cfg.connect_accounts == ("*",)
+    for bad in ("any,111122223333", "ANY2", "*"):
+        with pytest.raises(ConfigError):
+            stage_config(_ctx(stage="dev", alertEmail=EMAIL, awsConnect="on", connectAccounts=bad))
+
+
+def test_daily_caps_have_defaults_are_set_in_live_mode_only_and_are_validated(live: Built, dev: Built) -> None:
+    env = lambda_env(live)
+    assert (env["USER_INVESTIGATIONS_PER_DAY"], env["INVESTIGATIONS_PER_DAY"]) == ("10", "300")
+    assert "USER_INVESTIGATIONS_PER_DAY" not in lambda_env(dev)  # the free offline assistant is never capped
+    cfg = stage_config(_ctx(stage="dev", alertEmail=EMAIL, userDailyCap="5", dailyCap="0"))
+    assert (cfg.user_daily_cap, cfg.daily_cap) == (5, 0)
+    assert stage_config(_ctx(stage="dev", alertEmail=EMAIL, userDailyCap="")).user_daily_cap == 10
+    for bad in ({"userDailyCap": "-1"}, {"dailyCap": "lots"}, {"dailyCap": "99999999999"}):
+        with pytest.raises(ConfigError):
+            stage_config(_ctx(stage="dev", alertEmail=EMAIL, **bad))

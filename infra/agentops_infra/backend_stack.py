@@ -22,7 +22,7 @@ LAMBDA_TIMEOUT = Duration.seconds(29)
 # The role a user creates in their own account (backend/app/connections/models.py ROLE_NAME).
 ROLE_NAME = "AgentOpsReadOnly"
 # Reads are open and writes need sign-in, but still cap what a stranger can do to the bill. Requests/second, per stage.
-THROTTLE_RATE, THROTTLE_BURST = 10, 20
+THROTTLE_RATE, THROTTLE_BURST = 25, 50
 
 
 class BackendStack(Stack):
@@ -53,6 +53,9 @@ class BackendStack(Stack):
                     "INVESTIGATIONS_PER_HOUR": "60",
                     "USER_INVESTIGATIONS_PER_MINUTE": "3",  # a real model costs money: one person gets less
                     "USER_INVESTIGATIONS_PER_HOUR": "20",
+                    # Counted in the database, so they hold across every Lambda container (the ones above do not).
+                    "USER_INVESTIGATIONS_PER_DAY": str(cfg.user_daily_cap),
+                    "INVESTIGATIONS_PER_DAY": str(cfg.daily_cap),
                 }
             )
         if auth is not None:
@@ -91,6 +94,7 @@ class BackendStack(Stack):
         # trust policy of every user's read-only role, so it must not change when the function is replaced. Otherwise
         # the function keeps the role CDK would have made for it, exactly as before.
         self.role: iam.Role | None = None
+        self.connect_any = "*" in cfg.connect_accounts  # any user's own account may connect
         if cfg.aws_connect:
             self.role = iam.Role(
                 self,

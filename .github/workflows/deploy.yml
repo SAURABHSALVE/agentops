@@ -91,12 +91,16 @@ jobs:
           # own AWS account read-only. It changes IAM (a named function role and sts:AssumeRole), so switching it needs
           # a manual run with the input above. CONNECT_ACCOUNTS (optional, comma-separated) widens it past this account.
           AWS_CONNECT: ${{ vars.AWS_CONNECT || 'off' }}
-          CONNECT_ACCOUNTS: ${{ vars.CONNECT_ACCOUNTS }}
+          CONNECT_ACCOUNTS: ${{ vars.CONNECT_ACCOUNTS }} # "any", or a comma-separated list of account ids
+          # Daily investigation caps while the live AI is on. Empty means the defaults: 10 per user, 300 for the site.
+          USER_DAILY_CAP: ${{ vars.USER_DAILY_CAP }}
+          DAILY_CAP: ${{ vars.DAILY_CAP }}
         run: |
           echo "::add-mask::$ALERT_EMAIL"
           npx cdk deploy 'AgentOps-prod-*' -c stage=prod -c "alertEmail=$ALERT_EMAIL" \
             -c "agentProvider=$AGENT_PROVIDER" -c "openaiModel=$OPENAI_MODEL" \
             -c "awsConnect=$AWS_CONNECT" -c "connectAccounts=$CONNECT_ACCOUNTS" \
+            -c "userDailyCap=$USER_DAILY_CAP" -c "dailyCap=$DAILY_CAP" \
             --require-approval "$APPROVAL" --outputs-file ../cdk-outputs.json --progress events
       - name: Smoke test the live site
         working-directory: .
