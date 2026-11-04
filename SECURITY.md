@@ -107,3 +107,8 @@ account, and only that name. A user's role still trusts only this app's function
 another user cannot use it. Use it together with an invitation (the shared access code, shown once per signed-in user), the daily
 investigation caps (per user and for the site, kept in DynamoDB) and an OpenAI project spend limit, because every investigation
 costs money and open sign-up lets anyone try. Change the access code to stop new invitations; people already invited stay invited.
+
+Without the access code (`requireAccessCode=off`): every write still needs a signed-in user with a verified email. Cost is bounded
+by the per-user daily cap, the site-wide daily cap and the OpenAI spend limit, not by who knows a code. The backend will not start
+a real AI model with neither sign-in nor a code. Throwaway email addresses can multiply the per-user allowance, which is why the
+site-wide cap and the spend limit must stay set.

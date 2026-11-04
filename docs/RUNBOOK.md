@@ -130,3 +130,8 @@ In GitHub, Settings, Secrets and variables, Actions, Variables (then run Deploy 
 - Give invited people the access code from Secrets Manager (`AccessCode...`). They enter it once; to stop new invitations, change the
   secret's value. Also set a monthly spend limit on the OpenAI project: it is the final cost control.
 Before inviting many people: run a few investigations yourself, and watch the Lambda errors, throttles and p95 alarms for a day.
+
+### No access code for users (recommended for many users)
+Add the repository variable `REQUIRE_ACCESS_CODE` = `off` and run Deploy by hand with *allow_iam_changes* ticked. Then nobody needs the
+code: anyone who signs up (email verified) can connect their account and investigate, limited by `USER_DAILY_CAP` (default 5 in this
+mode), `DAILY_CAP` (default 300) and the OpenAI spend limit. Set the spend limit first. To go back, delete the variable and deploy again.
