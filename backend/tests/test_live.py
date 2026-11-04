@@ -207,7 +207,9 @@ def test_an_alarm_becomes_an_incident_with_masked_text(now: datetime) -> None:
     assert "ops@example.com" not in detail.summary and "[email]" in detail.summary
     assert {s.label for s in detail.signals} >= {"Data source", "Region", "Alarm metric", "Alarm threshold"}
     assert "Your AWS account (live)" in [s.value for s in detail.signals]
-    assert detail.started_at == alarm.state_since and detail.window_end == now
+    # The window starts a few minutes before the state change, so the datapoint that tripped the alarm is inside it.
+    assert detail.started_at == alarm.state_since - timedelta(minutes=5) and detail.window_end == now
+    assert detail.history[0].at == alarm.state_since
 
 
 def test_the_same_alarm_keeps_its_id_and_different_regions_do_not_collide() -> None:
@@ -414,7 +416,13 @@ def test_metrics_changes_and_other_metric_names(
     client, factory, _ = live
     factory.reader.changes = [
         Change("ev1", now - timedelta(minutes=50), "UpdateFunctionCode20150331v2", "lambda.amazonaws.com", "dev-role"),
-        Change("ev2", now - timedelta(minutes=300), "PutRolePolicy", "iam.amazonaws.com", "admin@example.com"),
+        Change(
+            "ev2",
+            now - timedelta(minutes=300),
+            "UpdateFunctionConfiguration",
+            "lambda.amazonaws.com",
+            "admin@example.com",
+        ),
     ]
     iid = incident_id(client, pool)
     diag = client.app.state.live.diagnostics(USER_A)  # type: ignore[attr-defined]
@@ -422,7 +430,7 @@ def test_metrics_changes_and_other_metric_names(
     from app.schemas import GetDeploymentsArgs, GetMetricsArgs
 
     metric = diag.get_service_metrics(GetMetricsArgs(incident_id=iid, metric="alarm_metric"))
-    assert metric.summary.baseline == 0 and metric.summary.peak == 12 and metric.summary.elevated_fraction > 0.9
+    assert metric.summary.baseline == 0 and metric.summary.peak == 12 and metric.summary.elevated_fraction > 0.8
     assert metric.reference_ids and metric.reference_ids[0].startswith("metric:alarm_metric:")
     with pytest.raises(MetricNotAvailableError):
         diag.get_service_metrics(GetMetricsArgs(incident_id=iid, metric="error_rate"))
@@ -434,7 +442,7 @@ def test_metrics_changes_and_other_metric_names(
     assert [d.change_type for d in changes.deployments] == ["config", "code"]
     assert all(d.id.startswith("ct:") for d in changes.deployments)
     assert "admin@example.com" not in json.dumps(changes.model_dump(mode="json"))
-    assert changes.deployments[1].minutes_before_incident_start == 10  # made 50 min ago, alarm began 40 min ago
+    assert changes.deployments[1].minutes_before_incident_start == 5  # made 50 min ago; the window starts 45 min ago
 
 
 def test_quiet_minutes_on_a_zero_baseline_metric_are_not_elevated(
@@ -561,3 +569,42 @@ def test_deleting_hands_the_store_the_live_incident_ids_too(
     store.delete_for_owner = spy
     assert client.delete("/api/me/investigations", headers=headers(pool)).status_code == 200
     assert iid in seen[0] and "INC-1001" in seen[0]
+
+
+def test_a_fresh_alarms_own_trigger_is_inside_the_window_and_a_slow_period_widens_the_lead(now: datetime) -> None:
+    fresh = alarm_from_raw(raw_alarm(now, minutes_ago=1), "eu-west-1", now)
+    assert fresh is not None
+    started, ended = window_of(fresh)
+    assert started < fresh.state_since - timedelta(minutes=4) and ended - started >= timedelta(minutes=5)
+    slow = alarm_from_raw(raw_alarm(now, minutes_ago=1, Period=900), "eu-west-1", now)
+    assert slow is not None
+    assert window_of(slow)[0] == slow.state_since - timedelta(minutes=30)  # two periods of 15 minutes
+
+
+def test_changes_to_other_services_are_left_out_but_deployment_services_are_kept(
+    live: tuple[TestClient, FakeFactory, LiveProvider], pool: FakePool, now: datetime
+) -> None:
+    client, factory, _ = live
+    factory.reader.changes = [
+        Change(
+            "a", now - timedelta(minutes=30), "UpdateFunctionConfiguration20150331v2", "lambda.amazonaws.com", "dev"
+        ),
+        Change("b", now - timedelta(minutes=31), "PutBucketPolicy", "s3.amazonaws.com", "dev"),
+        Change("c", now - timedelta(minutes=32), "UpdateStack", "cloudformation.amazonaws.com", "dev"),
+        Change("d", now - timedelta(minutes=33), "CreateUser", "iam.amazonaws.com", "dev"),
+    ]
+    iid = incident_id(client, pool)
+    diag = client.app.state.live.diagnostics(USER_A)  # type: ignore[attr-defined]
+    from app.schemas import GetDeploymentsArgs
+
+    got = diag.get_recent_deployments(GetDeploymentsArgs(incident_id=iid, hours=6))
+    assert sorted(d.id for d in got.deployments) == ["ct:a", "ct:c"]  # a Lambda alarm: Lambda and CloudFormation only
+
+
+def test_an_unknown_namespace_is_not_filtered() -> None:
+    from app.live.diagnostics import related_sources
+
+    assert related_sources("MyCompany/Orders") is None and related_sources(None) is None
+    assert related_sources("AWS/Lambda") == frozenset(
+        {"lambda", "cloudformation", "codedeploy", "codepipeline", "codebuild"}
+    )

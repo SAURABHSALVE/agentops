@@ -76,9 +76,15 @@ def alarm_from_raw(raw: dict[str, Any], region: str, now: datetime) -> LiveAlarm
     )
 
 
+# An alarm changes state after the datapoint that breached it, so the window starts a little earlier: otherwise a fresh
+# alarm's own trigger falls outside it and the metric looks flat.
+LEAD_IN = timedelta(minutes=5)
+
+
 def window_of(alarm: LiveAlarm) -> tuple[datetime, datetime]:
-    """(started_at, window_end): from when the alarm went off (at most 3 hours back) to when it was last read."""
-    return max(alarm.state_since, alarm.seen_at - MAX_WINDOW), alarm.seen_at
+    """(started_at, window_end): from just before the alarm went off (at most 3 hours back) to when it was read."""
+    lead = max(LEAD_IN, timedelta(seconds=2 * alarm.period_seconds))
+    return max(alarm.state_since - lead, alarm.seen_at - MAX_WINDOW), alarm.seen_at
 
 
 def _service(alarm: LiveAlarm) -> str:
@@ -116,7 +122,7 @@ def to_detail(alarm: LiveAlarm) -> IncidentDetail:
         # CloudWatch alarms carry no severity; "medium" is a placeholder, not a judgement.
         severity="medium",
         status="open",
-        summary=f"CloudWatch alarm in ALARM state. {reason}{since_note}"[:600],
+        summary=f"CloudWatch alarm in ALARM state since {alarm.state_since:%H:%M} UTC. {reason}{since_note}"[:600],
         started_at=started,
         window_end=ended,
         updated_at=alarm.seen_at,

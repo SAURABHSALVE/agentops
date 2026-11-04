@@ -119,6 +119,12 @@ def connect_two(fake_backend: Path) -> Built:
 
 
 @pytest.fixture(scope="session")
+def connect_any(fake_backend: Path) -> Built:
+    """Any user's own account may connect (-c connectAccounts=any)."""
+    return build("dev", fake_backend, aws_connect=True, connect_accounts=("*",))
+
+
+@pytest.fixture(scope="session")
 def open_demo(fake_backend: Path) -> Built:
     """The deployment with sign-in switched off (-c auth=none): the open demo as it was before login."""
     return build("dev", fake_backend, auth="none")

@@ -91,6 +91,14 @@ FINAL_ROUND_NOTICE = (
     "you already retrieved. If it does not support a clear cause, say so with low confidence and no remediation."
 )
 
+# Sent once, after a real model cited an evidence id that no tool returned in this run. Without it such a run fails;
+# with it the model usually corrects itself. The check that rejected the answer applies to the second answer too.
+REPAIR_NOTICE = (
+    "Your answer was rejected: it cited evidence ids that no tool returned in this investigation. Answer again. "
+    "Cite only reference ids that appeared in tool results, with the matching source. A failed tool call has no id. "
+    "If the evidence does not support a cause, use low confidence and an empty evidence list."
+)
+
 
 def _escape(text: str) -> str:
     # "<" and ">" become unicode escapes, so tool data can never contain a literal closing tag.

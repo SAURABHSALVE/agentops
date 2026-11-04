@@ -78,7 +78,6 @@ export function failureHelp(code: string): FailureHelp {
 
 const ERROR_HELP: Record<string, string> = {
   network_error: "We could not reach the server. Check your connection and try again.",
-  rate_limited: "Too many investigations in a short time. Wait a minute and try again.",
   unauthorized: "That action needs the access code. Enter it above and try again.",
   sign_in_required: "Sign in to run investigations, approve actions and leave feedback.",
   invalid_token: "Your sign-in has expired. Sign in again to continue.",
@@ -87,7 +86,7 @@ const ERROR_HELP: Record<string, string> = {
   aws_connect_unavailable: "Connecting an AWS account is not available on this site.",
   aws_connection_not_set_up: "Save your region and log groups first (step 1).",
   aws_account_not_enabled:
-    "That AWS account is not enabled for connecting on this site yet. During the first rollout only the site owner's account can connect.",
+    "That AWS account is not allowed to connect on this site. Ask the site owner to enable it.",
   consent_out_of_date: "The wording you agreed to has changed. Read it and agree again.",
   aws_role_unreachable:
     "AgentOps could not use the role in your AWS account. Check that the CloudFormation stack finished creating, that the role ARN is the one it shows, and that the stack was made from the template on this page.",
@@ -98,6 +97,8 @@ const ERROR_HELP: Record<string, string> = {
 
 /** Turn an API error into advice a non-engineer can act on. Falls back to the server's own message. */
 export function friendlyError(code: string, fallback: string): string {
+  // A rate-limit message says which limit was hit (a minute's worth, your day's, or the whole site's) and when it
+  // resets, so the server's own sentence is the useful one.
   return ERROR_HELP[code] ?? fallback;
 }
 

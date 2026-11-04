@@ -51,6 +51,7 @@ from app.security import ACCESS_HEADER, AccessGate, KeyedRateLimiter, RateLimite
 from app.simulator.captured import CapturedSource
 from app.simulator.service import Simulator
 from app.simulator.source import FixtureSource, TelemetrySource
+from app.usage import DailyCaps, DynamoDbUsageStore, InMemoryUsageStore, SqliteUsageStore, UsageStore
 
 logger = logging.getLogger("agentops")
 logger.setLevel(logging.INFO)  # Lambda forwards this to CloudWatch; the default would drop the per-request line
@@ -106,6 +107,14 @@ def _build_connection_store(settings: Settings) -> ConnectionStore:
     return InMemoryConnectionStore()
 
 
+def _build_usage_store(settings: Settings) -> UsageStore:
+    if settings.storage_mode == "dynamodb":
+        return DynamoDbUsageStore.for_table(settings.dynamodb_table)
+    if settings.storage_mode == "local":
+        return SqliteUsageStore(Path(settings.local_data_dir) / "agentops.sqlite3")
+    return InMemoryUsageStore()
+
+
 def _build_live_store(settings: Settings) -> LiveSnapshotStore:
     if settings.storage_mode == "dynamodb":
         from app.live.dynamodb_store import DynamoDbLiveSnapshotStore  # keeps boto3 optional locally
@@ -135,6 +144,7 @@ def create_app(
     connection_store: ConnectionStore | None = None,
     live_store: LiveSnapshotStore | None = None,
     live_readers: ReaderFactory | None = None,
+    usage_store: UsageStore | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
@@ -156,6 +166,13 @@ def create_app(
         sign_in_on=app.state.verifier is not None,
         provider_kind=info.kind,
         provider_label=info.label,
+    )
+    app.state.usage = usage_store or _build_usage_store(settings)
+    app.state.caps = DailyCaps(
+        app.state.usage,
+        per_user=settings.user_investigations_per_day,
+        total=settings.investigations_per_day,
+        costs_money=info.kind != "mock",
     )
     app.state.live = LiveService(
         app.state.connections,

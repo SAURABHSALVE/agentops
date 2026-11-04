@@ -71,6 +71,14 @@ def acknowledge_backend(stack: BackendStack) -> None:
             "AWSLambdaBasicExecutionRole is the AWS-managed policy that grants only CloudWatch Logs writes. "
             "The role is named (not generated) so users' read-only roles can trust it by ARN.",
         )
+    if stack.role is not None and stack.connect_any:
+        _ack(
+            stack.role,
+            "AwsSolutions-IAM5[Resource::arn:aws:iam::*:role/AgentOpsReadOnly]",
+            "Any user's own account may connect, so the account part of the role ARN cannot be named. Only the fixed "
+            "role name AgentOpsReadOnly can be assumed. Each user's role trusts this function's role and only with "
+            "that user's own ExternalId (made by the server, never repeated), so one user cannot reach another's.",
+        )
     _ack(
         stack.function,
         "AwsSolutions-L1",

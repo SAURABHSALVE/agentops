@@ -43,7 +43,11 @@ class StageConfig:
     aws_connect: bool = False
     # Accounts whose role may be assumed. Empty means only the account AgentOps itself runs in (the first rollout).
     # Widen with: -c connectAccounts=ACCOUNT_ID,ACCOUNT_ID
-    connect_accounts: tuple[str, ...] = ()
+    connect_accounts: tuple[str, ...] = ()  # ("*",) for -c connectAccounts=any: every user's own account may connect
+    # Daily caps on investigations while the live AI is on (each costs money), counted in the database: per user, and
+    # for the whole site. Change with: -c userDailyCap=10 -c dailyCap=300 (0 means no cap)
+    user_daily_cap: int = 10
+    daily_cap: int = 300
 
     @property
     def sign_in(self) -> bool:
@@ -94,13 +98,23 @@ def stage_config(scope: Construct) -> StageConfig:
     if connect not in ("on", "off"):
         raise ConfigError("awsConnect must be 'on' or 'off'.")
     accounts = tuple(a.strip() for a in (_context(scope, "connectAccounts") or "").split(",") if a.strip())
-    if any(not _ACCOUNT.match(a) for a in accounts):
-        raise ConfigError("connectAccounts must be a comma-separated list of 12-digit AWS account ids.")
+    if accounts == ("any",):
+        accounts = ("*",)  # any account: the usual way a monitoring service works, protected by each user's ExternalId
+    elif any(not _ACCOUNT.match(a) for a in accounts):
+        raise ConfigError("connectAccounts must be 'any' or a comma-separated list of 12-digit AWS account ids.")
     if connect == "on" and auth != "cognito":
         raise ConfigError("awsConnect=on needs sign-in: a connection belongs to one signed-in user (use auth=cognito).")
     if accounts and connect != "on":
         raise ConfigError("connectAccounts only applies together with awsConnect=on.")
+    caps = {}
+    for key, name in (("userDailyCap", "user_daily_cap"), ("dailyCap", "daily_cap")):
+        raw_cap = _context(scope, key)
+        if raw_cap:  # empty (an unset repository variable) means the default
+            if not raw_cap.isdigit() or int(raw_cap) > 10_000_000:
+                raise ConfigError(f"{key} must be a whole number between 0 and 10000000.")
+            caps[name] = int(raw_cap)
     return StageConfig(
+        **caps,
         auth=auth,
         aws_connect=connect == "on",
         connect_accounts=accounts,

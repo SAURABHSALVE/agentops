@@ -60,11 +60,6 @@ _START_ERRORS: dict[int | str, dict[str, Any]] = {**_ERRORS, 409: {"model": Erro
 router = APIRouter()
 
 
-def require_access(request: Request, x_access_code: Annotated[str | None, Header(alias=ACCESS_HEADER)] = None) -> None:
-    """Gate for every write. A no-op unless an access code is configured."""
-    request.app.state.access.check(x_access_code)
-
-
 def caller(request: Request, authorization: Annotated[str | None, Header()] = None) -> str:
     """The owner id of whoever is asking: a verified user, or the shared anonymous owner without a token.
 
@@ -88,6 +83,32 @@ def signed_in(request: Request, owner: Annotated[str, Depends(caller)]) -> str:
 
 
 Owner = Annotated[str, Depends(caller)]
+
+
+def _is_user(request: Request, owner: str) -> bool:
+    """A real signed-in user (not the shared anonymous owner, and sign-in is on)."""
+    return request.app.state.verifier is not None and owner != ANONYMOUS_OWNER
+
+
+def require_access(
+    request: Request, owner: Owner, x_access_code: Annotated[str | None, Header(alias=ACCESS_HEADER)] = None
+) -> None:
+    """Gate for every write. A no-op unless an access code is configured.
+
+    A signed-in user who presents the right code once is remembered as invited and need not send it again. The check
+    for a wrong or missing code is unchanged, so an uninvited caller learns nothing.
+    """
+    gate = request.app.state.access
+    if not gate.required:
+        return
+    usage = request.app.state.usage
+    if _is_user(request, owner) and usage.is_invited(owner):
+        return
+    gate.check(x_access_code)
+    if _is_user(request, owner):
+        usage.invite(owner)
+
+
 SignedInOwner = Annotated[str, Depends(signed_in)]
 
 
@@ -113,12 +134,16 @@ def _connections(request: Request) -> ConnectionService:
 
 
 @router.get("/api/config", tags=["system"])
-def public_config(request: Request) -> dict[str, Any]:
-    """What the UI needs to know up front. Contains nothing secret."""
+def public_config(request: Request, owner: Owner) -> dict[str, Any]:
+    """What the UI needs to know up front. Contains nothing secret. `write_access` is for the caller: a user who has
+    already been invited no longer needs the code."""
     info = _investigations(request).provider_info
+    needs_code = request.app.state.access.required and not (
+        _is_user(request, owner) and request.app.state.usage.is_invited(owner)
+    )
     return {
         "data_mode": _sim(request).data_mode,
-        "write_access": "code_required" if request.app.state.access.required else "open",
+        "write_access": "code_required" if needs_code else "open",
         "auth": {"mode": "none" if request.app.state.verifier is None else "cognito"},
         "provider": {"kind": info.kind, "label": info.label},
         "aws_connect": {"available": _connections(request).available_for_anyone()},
@@ -210,7 +235,13 @@ def start_investigation(
     # it is turned away without using up the shared allowance.
     request.app.state.user_limiter.check(owner)
     request.app.state.limiter.check()
-    started = svc.start(incident_id)
+    caps = request.app.state.caps
+    caps.charge(owner)  # before any record exists, so a refusal never leaves one 'running'
+    try:
+        started = svc.start(incident_id)
+    except Exception:
+        caps.refund(owner)  # an investigation that could not start must not use up the day's allowance
+        raise
     background.add_task(svc.run, started.id)
     return started
 

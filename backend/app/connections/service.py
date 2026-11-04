@@ -89,6 +89,7 @@ class ConnectionService:
         self._account = settings.aws_connect_account_id
         self._principal = settings.aws_connect_principal_arn or f"arn:aws:iam::{self._account}:root"
         self._allowed = frozenset(settings.aws_connect_allowed_accounts or ((self._account,) if self._account else ()))
+        self._any_account = "*" in self._allowed
         self._provider_kind = provider_kind
         self._provider_label = provider_label
         self._now = now
@@ -209,7 +210,7 @@ class ConnectionService:
         """Step 3: remember the ARN of the role they created. Whether it works is proven later, by using it."""
         self._require(owner)
         connection = self._saved(owner)
-        if request.role_arn.split(":")[4] not in self._allowed:
+        if not self._any_account and request.role_arn.split(":")[4] not in self._allowed:
             raise AwsAccountNotEnabledError("That AWS account is not enabled for connecting on this site yet.")
         registered = connection.model_copy(
             update={
