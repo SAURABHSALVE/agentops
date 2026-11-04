@@ -18,6 +18,7 @@ from app.errors import IncidentNotFoundError, MetricNotAvailableError
 from app.live.alarms import to_detail
 from app.live.models import LiveAlarm
 from app.live.reader import AwsReader
+from app.live.related import MAX_RELATED, related_specs
 from app.redaction import redact
 from app.schemas import (
     DeploymentRecord,
@@ -30,9 +31,11 @@ from app.schemas import (
     LogLevel,
     LogSearchResult,
     MetricsResult,
+    RelatedMetric,
+    RelatedMetricsResult,
     SearchLogsArgs,
 )
-from app.simulator.metrics import LEAD, build_metrics_result_from_values, series_span
+from app.simulator.metrics import LEAD, build_metrics_result_from_values, series_span, summarise
 from app.simulator.service import MAX_MESSAGE_CHARS, no_match_id
 
 PER_GROUP_LIMIT = 50  # the most lines fetched from one log group for one search
@@ -94,6 +97,30 @@ def _case_variants(query: str) -> list[str]:
     """CloudWatch filter patterns are case-sensitive; the demo search is not. Ask for the usual spellings, then
     confirm case-insensitively here."""
     return list({query, query.lower(), query.upper(), query.capitalize()})
+
+
+def _per_minute(
+    points: list[tuple[datetime, float]], start: datetime, end: datetime, span: timedelta, *, zero_gaps: bool
+) -> list[tuple[datetime, float]]:
+    """One value per minute from `start` to `end`, as the demo metrics are, so one summary fits every source.
+
+    A minute that no data point covers is 0 when `zero_gaps` (CloudWatch reports nothing when nothing happened), and
+    otherwise repeats the last value seen (the first value, before any), as a level such as memory would.
+    """
+    stamps = [p[0] for p in points]
+    values: list[tuple[datetime, float]] = []
+    moment = start
+    while moment <= end:
+        i = bisect_right(stamps, moment) - 1
+        if i >= 0 and moment < stamps[i] + span:
+            value = points[i][1]
+        elif zero_gaps:
+            value = 0.0
+        else:
+            value = points[max(i, 0)][1]
+        values.append((moment, value))
+        moment += timedelta(minutes=1)
+    return values
 
 
 def _entry_id(group: str, event_id: str) -> str:
@@ -189,18 +216,49 @@ class LiveDiagnostics:
         if not points:
             raise MetricNotAvailableError("CloudWatch returned no data points for this metric in the window.")
 
-        # One value per minute, as the demo metrics are, so the same summary (baseline, peak, share elevated) applies. A
-        # minute no data point covers counts as 0: CloudWatch reports nothing when nothing happened (no errors, no
+        # A minute no data point covers counts as 0: CloudWatch reports nothing when nothing happened (no errors, no
         # requests), and the alarm's own statistic decides what "elevated" means.
-        stamps = [p[0] for p in points]
-        span = timedelta(seconds=max(60, alarm.period_seconds))
-        values: list[tuple[datetime, float]] = []
-        moment = start
-        while moment <= end:
-            i = bisect_right(stamps, moment) - 1
-            values.append((moment, points[i][1] if i >= 0 and moment < stamps[i] + span else 0.0))
-            moment += timedelta(minutes=1)
+        values = _per_minute(points, start, end, timedelta(seconds=max(60, alarm.period_seconds)), zero_gaps=True)
         return build_metrics_result_from_values(incident, "alarm_metric", alarm.unit or alarm.metric_name, values)
+
+    def get_related_metrics(self, incident_id: str) -> RelatedMetricsResult:
+        alarm = self._alarm(incident_id)
+        if not alarm.metric_name or not alarm.namespace:
+            raise MetricNotAvailableError("This alarm is not based on a single metric, so it has no related metrics.")
+        specs = related_specs(alarm.namespace, alarm.metric_name)
+        if not specs:
+            raise MetricNotAvailableError("No related metrics are known for this kind of alarm.")
+        incident = to_detail(alarm)
+        start, end = series_span(incident)
+        found = self._connected().related_metric_points(alarm, specs, start, end)
+        span = timedelta(seconds=max(60, alarm.period_seconds))
+        metrics = [
+            RelatedMetric(
+                name=spec.name,
+                statistic=spec.stat,
+                unit=spec.unit,
+                # Counts are zero when nothing was reported; a level (CPU, memory, queue age) keeps its last value.
+                summary=summarise(
+                    incident, _per_minute(found[spec.name], start, end, span, zero_gaps=spec.stat == "Sum")
+                ),
+            )
+            for spec in specs
+            if found.get(spec.name)
+        ][:MAX_RELATED]
+        if not metrics:
+            raise MetricNotAvailableError(
+                "CloudWatch has no data for the other metrics of this resource in the window."
+            )
+        window = f"{start:%H:%M}-{end:%H:%M}"
+        return RelatedMetricsResult(
+            incident_id=incident.id,
+            service=incident.service,
+            window_start=start,
+            window_end=end,
+            metrics=metrics,
+            without_data=len(specs) - len(metrics),
+            reference_ids=[f"metric:related:{m.name}:{window}" for m in metrics],
+        )
 
     def get_recent_deployments(self, args: GetDeploymentsArgs) -> DeploymentsResult:
         alarm = self._alarm(args.incident_id)

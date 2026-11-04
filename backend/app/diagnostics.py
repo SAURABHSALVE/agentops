@@ -15,6 +15,7 @@ from app.schemas import (
     IncidentDetail,
     LogSearchResult,
     MetricsResult,
+    RelatedMetricsResult,
     SearchLogsArgs,
 )
 
@@ -34,3 +35,7 @@ class Diagnostics(Protocol):
     def get_service_metrics(self, args: GetMetricsArgs) -> MetricsResult: ...
 
     def get_recent_deployments(self, args: GetDeploymentsArgs) -> DeploymentsResult: ...
+
+    def get_related_metrics(self, incident_id: str) -> RelatedMetricsResult:
+        """Summaries of the other metrics of the same resource. Offered to the model only for a real account."""
+        ...

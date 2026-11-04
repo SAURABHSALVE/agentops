@@ -9,6 +9,7 @@ import re
 from datetime import timedelta
 
 from app.errors import (
+    MetricNotAvailableError,
     RemediationNotApplicableError,
     UnknownRemediationError,
 )
@@ -25,6 +26,7 @@ from app.schemas import (
     IncidentSummary,
     LogSearchResult,
     MetricsResult,
+    RelatedMetricsResult,
     SearchLogsArgs,
     VerificationResult,
 )
@@ -93,6 +95,10 @@ class Simulator:
     def get_service_metrics(self, args: GetMetricsArgs) -> MetricsResult:
         incident = self._repo.get_incident(args.incident_id)
         return self._source.metrics(incident, args.metric)
+
+    def get_related_metrics(self, incident_id: str) -> RelatedMetricsResult:
+        """Demo incidents carry their own set of named metrics, so there are no neighbouring ones to read."""
+        raise MetricNotAvailableError("Related metrics exist only for an alarm in a connected AWS account.")
 
     def get_recent_deployments(self, args: GetDeploymentsArgs) -> DeploymentsResult:
         incident = self._repo.get_incident(args.incident_id)

@@ -57,13 +57,7 @@ def build_metrics_result_from_values(
 ) -> MetricsResult:
     """Summarise one value per minute across the incident's lead-in and window (shared by every source)."""
     start, end = series_span(incident)
-
-    lead = [v for ts, v in values if ts < incident.started_at]
-    window = [(ts, v) for ts, v in values if ts >= incident.started_at]
-    baseline = round(sum(lead) / len(lead), 2)
-    # `v > 0` matters for a metric whose normal level is zero (errors, say): there, "at least twice nothing" would
-    # count every quiet minute as elevated.
-    elevated = [(ts, v) for ts, v in window if v > 0 and v >= ELEVATED_FACTOR * baseline]
+    summary = summarise(incident, values)
 
     buckets: dict[int, float] = {}
     for ts, v in values:
@@ -84,12 +78,23 @@ def build_metrics_result_from_values(
         resolution_minutes=BUCKET_MINUTES,
         aggregation="max",
         points=points,
-        summary=MetricSummary(
-            baseline=baseline,
-            peak=max(v for _, v in window),
-            mean_in_window=round(sum(v for _, v in window) / len(window), 2),
-            elevated_fraction=round(len(elevated) / len(window), 3),
-            first_elevated_at=elevated[0][0] if elevated else None,
-        ),
+        summary=summary,
         reference_ids=[f"metric:{metric}:{start:%H:%M}-{end:%H:%M}"],
+    )
+
+
+def summarise(incident: IncidentDetail, values: list[tuple[datetime, float]]) -> MetricSummary:
+    """Baseline (the lead-in), peak, mean and the share of the incident window at twice the baseline or more."""
+    lead = [v for ts, v in values if ts < incident.started_at]
+    window = [(ts, v) for ts, v in values if ts >= incident.started_at]
+    baseline = round(sum(lead) / len(lead), 2)
+    # `v > 0` matters for a metric whose normal level is zero (errors, say): there, "at least twice nothing" would
+    # count every quiet minute as elevated.
+    elevated = [(ts, v) for ts, v in window if v > 0 and v >= ELEVATED_FACTOR * baseline]
+    return MetricSummary(
+        baseline=baseline,
+        peak=max(v for _, v in window),
+        mean_in_window=round(sum(v for _, v in window) / len(window), 2),
+        elevated_fraction=round(len(elevated) / len(window), 3),
+        first_elevated_at=elevated[0][0] if elevated else None,
     )

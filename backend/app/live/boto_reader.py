@@ -21,6 +21,7 @@ from app.connections.models import AwsConnection
 from app.errors import AwsReadFailedError, AwsRoleUnreachableError
 from app.live.models import LiveAlarm
 from app.live.reader import Change, ChangeScan, LogHit, LogScan
+from app.live.related import RelatedSpec
 
 logger = logging.getLogger("agentops.live")
 
@@ -92,40 +93,60 @@ class BotoReader:
         alarms: list[dict[str, Any]] = list(response.get("MetricAlarms", []))
         return alarms[:MAX_ALARMS]
 
-    def metric_points(self, alarm: LiveAlarm, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
+    @staticmethod
+    def _query(query_id: str, alarm: LiveAlarm, metric: str, stat: str) -> dict[str, Any]:
         period = max(60, alarm.period_seconds - alarm.period_seconds % 60)
-        query = {
-            "Id": "m1",
+        return {
+            "Id": query_id,
             "MetricStat": {
                 "Metric": {
                     "Namespace": alarm.namespace,
-                    "MetricName": alarm.metric_name,
+                    "MetricName": metric,
                     "Dimensions": [{"Name": d.name, "Value": d.value} for d in alarm.dimensions],
                 },
                 "Period": period,
-                "Stat": alarm.statistic or "Average",
+                "Stat": stat,
             },
             "ReturnData": True,
         }
-        points: list[tuple[datetime, float]] = []
+
+    def _series(
+        self, queries: list[dict[str, Any]], start: datetime, end: datetime, what: str
+    ) -> dict[str, list[tuple[datetime, float]]]:
+        """Run GetMetricData for `queries` and return the sorted points of each query id."""
+        points: dict[str, list[tuple[datetime, float]]] = {}
         token: str | None = None
         try:
             for _ in range(METRIC_PAGES):
                 page = self._cloudwatch.get_metric_data(
-                    MetricDataQueries=[query],
+                    MetricDataQueries=queries,
                     StartTime=start,
                     EndTime=end,
                     ScanBy="TimestampAscending",
                     **({"NextToken": token} if token else {}),
                 )
                 for result in page.get("MetricDataResults", []):
-                    points.extend(zip(result.get("Timestamps", []), result.get("Values", []), strict=False))
+                    mine = points.setdefault(str(result.get("Id")), [])
+                    mine.extend(zip(result.get("Timestamps", []), result.get("Values", []), strict=False))
                 token = page.get("NextToken")
                 if not token:
                     break
         except (ClientError, BotoCoreError) as exc:
-            raise read_failed(exc, "the alarm's metric") from None
-        return sorted((_aware(t), float(v)) for t, v in points)
+            raise read_failed(exc, what) from None
+        return {k: sorted((_aware(t), float(v)) for t, v in pts) for k, pts in points.items()}
+
+    def metric_points(self, alarm: LiveAlarm, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
+        query = self._query("m1", alarm, alarm.metric_name or "", alarm.statistic or "Average")
+        return self._series([query], start, end, "the alarm's metric").get("m1", [])
+
+    def related_metric_points(
+        self, alarm: LiveAlarm, specs: Sequence[RelatedSpec], start: datetime, end: datetime
+    ) -> dict[str, list[tuple[datetime, float]]]:
+        if not specs or not alarm.namespace:
+            return {}
+        queries = [self._query(f"r{i}", alarm, spec.name, spec.stat) for i, spec in enumerate(specs)]
+        series = self._series(queries, start, end, "the service's other metrics")
+        return {spec.name: series[f"r{i}"] for i, spec in enumerate(specs) if series.get(f"r{i}")}
 
     # ---- logs ---------------------------------------------------------------------------------
 

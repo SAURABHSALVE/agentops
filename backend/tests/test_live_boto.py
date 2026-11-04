@@ -121,6 +121,69 @@ def test_the_alarms_own_metric_is_read_with_its_statistic_and_period() -> None:
     assert points == [(NOW - timedelta(minutes=20), 1.0), (NOW - timedelta(minutes=10), 3.0)]  # oldest first
 
 
+def test_the_neighbouring_metrics_are_read_in_one_call_with_the_alarms_dimensions_and_period() -> None:
+    from app.live.related import related_specs
+
+    raw = {
+        "AlarmName": "a",
+        "StateTransitionedTimestamp": NOW - timedelta(minutes=30),
+        "MetricName": "Errors",
+        "Namespace": "AWS/Lambda",
+        "Statistic": "Sum",
+        "Period": 300,
+        "Dimensions": [{"Name": "FunctionName", "Value": "checkout"}],
+    }
+    alarm = alarm_from_raw(raw, "eu-west-1", NOW)
+    assert alarm is not None
+    specs = related_specs("AWS/Lambda", "Errors")
+    assert [s.name for s in specs] == ["Invocations", "Throttles", "Duration", "ConcurrentExecutions"]  # not Errors
+    start, end = NOW - timedelta(hours=1), NOW
+    queries = [
+        {
+            "Id": f"r{i}",
+            "MetricStat": {
+                "Metric": {
+                    "Namespace": "AWS/Lambda",
+                    "MetricName": s.name,
+                    "Dimensions": [{"Name": "FunctionName", "Value": "checkout"}],
+                },
+                "Period": 300,
+                "Stat": s.stat,
+            },
+            "ReturnData": True,
+        }
+        for i, s in enumerate(specs)
+    ]
+    cw = client("cloudwatch")
+    with Stubber(cw) as stub:
+        stub.add_response(
+            "get_metric_data",
+            {
+                "MetricDataResults": [
+                    {
+                        "Id": "r0",
+                        "Timestamps": [NOW - timedelta(minutes=10), NOW - timedelta(minutes=20)],
+                        "Values": [9.0, 1.0],
+                    },
+                    {"Id": "r1", "Timestamps": [], "Values": []},  # Throttles: no data
+                    {"Id": "r2", "Timestamps": [NOW - timedelta(minutes=10)], "Values": [250.0]},
+                ]
+            },
+            {
+                "MetricDataQueries": queries,
+                "StartTime": start,
+                "EndTime": end,
+                "ScanBy": "TimestampAscending",
+            },
+        )
+        got = reader(cw=cw).related_metric_points(alarm, specs, start, end)
+        stub.assert_no_pending_responses()
+    assert got == {
+        "Invocations": [(NOW - timedelta(minutes=20), 1.0), (NOW - timedelta(minutes=10), 9.0)],
+        "Duration": [(NOW - timedelta(minutes=10), 250.0)],
+    }  # a metric with no data is absent, not an empty list
+
+
 def test_a_failing_read_gives_a_fixed_sentence_not_amazons_text() -> None:
     cw = client("cloudwatch")
     with Stubber(cw) as stub:

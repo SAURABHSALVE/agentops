@@ -145,6 +145,27 @@ class MetricsResult(_Model):
     reference_ids: list[str]
 
 
+class RelatedMetric(_Model):
+    """One neighbouring metric of the alarm's service (a Lambda's Duration next to its Errors alarm, say)."""
+
+    name: str
+    statistic: str
+    unit: str
+    summary: MetricSummary
+
+
+class RelatedMetricsResult(_Model):
+    """Summaries of the other metrics of the same service, for a real account's alarm (live incidents only)."""
+
+    incident_id: IncidentId
+    service: str
+    window_start: AwareDatetime
+    window_end: AwareDatetime
+    metrics: list[RelatedMetric]
+    without_data: int  # neighbouring metrics CloudWatch has no data for (they may simply not apply to this resource)
+    reference_ids: list[str]
+
+
 class DeploymentRecord(_Model):
     id: str
     deployed_at: AwareDatetime
