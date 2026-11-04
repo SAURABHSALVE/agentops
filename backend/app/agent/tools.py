@@ -32,6 +32,7 @@ from app.schemas import (
     LogSearchResult,
     MetricsQuery,
     MetricsResult,
+    RelatedMetricsResult,
     SearchLogsArgs,
 )
 from app.simulator.service import Simulator
@@ -54,6 +55,7 @@ class ToolSpec:
     run: Callable[[Diagnostics, str, Any], BaseModel]
     summarize: Callable[[Any], str]
     source: EvidenceSource | None  # what kind of evidence this tool's reference ids are
+    live_only: bool = False  # offered, and run, only for an alarm in a connected AWS account
 
 
 def _sum_incident(r: IncidentDetail) -> str:
@@ -70,6 +72,10 @@ def _sum_metrics(r: MetricsResult) -> str:
         f"{r.metric}: peak {s.peak:g} {r.unit} vs baseline {s.baseline:g}; "
         f"elevated for {round(s.elevated_fraction * 100)}% of the incident window"
     )
+
+
+def _sum_related(r: RelatedMetricsResult) -> str:
+    return f"{len(r.metrics)} related metric(s): " + ", ".join(m.name for m in r.metrics)
 
 
 def _sum_deploys(r: DeploymentsResult) -> str:
@@ -112,6 +118,20 @@ TOOLS: dict[str, ToolSpec] = {
             source="metrics",
         ),
         ToolSpec(
+            name="get_related_metrics",
+            description=(
+                "Summaries (baseline, peak, share of the window elevated) of the OTHER metrics of the same resource as "
+                "the alarm, for example a function's invocations, duration and throttles next to its errors alarm. "
+                "Use it once, after the alarm's own metric, to tell a real fault from more traffic or a slow "
+                "dependency. A counter that rose with traffic is not a fault by itself. No arguments."
+            ),
+            arg_model=NoArgs,
+            run=lambda sim, iid, _a: sim.get_related_metrics(iid),
+            summarize=_sum_related,
+            source="metrics",
+            live_only=True,
+        ),
+        ToolSpec(
             name="get_recent_deployments",
             description="List deployments to this incident's service in the last N hours before the window ends.",
             arg_model=DeploymentsQuery,
@@ -123,8 +143,13 @@ TOOLS: dict[str, ToolSpec] = {
 }
 
 
-def tool_schemas() -> tuple[ToolSchema, ...]:
-    return tuple(ToolSchema(t.name, t.description, t.arg_model.model_json_schema()) for t in TOOLS.values())
+def tool_schemas(live: bool = False) -> tuple[ToolSchema, ...]:
+    """The tools offered to a model. `live` (an alarm in a real account) adds the ones that exist only there."""
+    return tuple(
+        ToolSchema(t.name, t.description, t.arg_model.model_json_schema())
+        for t in TOOLS.values()
+        if live or not t.live_only
+    )
 
 
 @dataclass(frozen=True)
@@ -192,7 +217,7 @@ class ToolRunner:
         started = time.perf_counter()
         name = safe_tool_name(raw_name)
         spec = TOOLS.get(raw_name)
-        if spec is None:
+        if spec is None or (spec.live_only and not (diagnostics is not None and diagnostics.is_live)):
             return self._fail(name, {}, "unknown_tool", "No such tool. Use only the tools provided.", started)
 
         if len(raw_arguments) > MAX_RAW_ARGUMENT_CHARS:

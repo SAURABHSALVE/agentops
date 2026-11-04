@@ -12,7 +12,7 @@ Logs record ids, tool names, durations, status and token counts. Never prompts o
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -20,6 +20,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.agent.calibration import Ceiling, evidence_ceiling
+from app.agent.claims import claim_problems
 from app.agent.models import (
     EvidenceSource,
     Failure,
@@ -32,7 +33,14 @@ from app.agent.models import (
     ToolCallRecord,
     Usage,
 )
-from app.agent.prompts import FINAL_ROUND_NOTICE, REPAIR_NOTICE, USER_PROMPT, encode_tool_result, system_prompt
+from app.agent.prompts import (
+    FINAL_ROUND_NOTICE,
+    REPAIR_NOTICE,
+    USER_PROMPT,
+    claim_repair_notice,
+    encode_tool_result,
+    system_prompt,
+)
 from app.agent.provider import (
     CompletionRequest,
     CompletionResponse,
@@ -102,6 +110,14 @@ def _normalise_ids(calls: tuple[ToolCallRequest, ...], taken: int) -> tuple[Tool
     return tuple(out)
 
 
+class _Contradicted(Exception):
+    """The answer's own sentences disagree with the tool results. Carries the problems, not a failure code."""
+
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__("contradicted")
+        self.problems = problems
+
+
 LIVE_LIMITATION = (
     "Read from your own AWS account through a read-only role, over a short window. "
     "AgentOps cannot change anything there."
@@ -114,12 +130,18 @@ def validate_answer(
     service: str,
     ceiling: Ceiling | None = None,
     live: bool = False,
+    observed: Sequence[tuple[str, dict[str, Any]]] = (),
+    retry_contradictions: bool = False,
 ) -> Findings:
     """Turn raw provider text into Findings, or raise _Reject. Pure; no provider or tool access.
 
     `ceiling` is what this run's evidence supports. A provider that claims more is lowered to it (never raised), and
     the change is recorded in the findings. A fix proposed with a confidence that falls to low is withheld rather
     than failing the run; a fix that is off the allowlist or inapplicable still fails it.
+
+    `observed` (the successful tool results) is read for sentences that contradict it (app/agent/claims.py). With
+    `retry_contradictions` the answer is sent back (_Contradicted); without, it is kept, the disagreement is added to
+    its limitations and its confidence is capped at medium, so the reader is told rather than misled.
     """
     if len(text) > MAX_FINAL_TEXT_CHARS:
         raise _Reject("invalid_output")
@@ -134,8 +156,14 @@ def validate_answer(
         if grounded.get(item.reference_id) != item.source:
             raise _Reject("ungrounded_evidence")
 
+    problems = claim_problems(_sentences_of(answer), observed)
+    if problems and retry_contradictions:
+        raise _Contradicted(problems)
+
     remediation: Remediation | None = None
-    notes: list[str] = []
+    notes: list[str] = [f"Check this against the evidence: {p}." for p in problems]
+    if problems:
+        ceiling = (ceiling or Ceiling("high", None)).capped("medium", "the answer contradicts what the tools returned")
     if live:
         # Nothing can be done in a real account, so an action is never offered. A model that names one anyway is
         # ignored (and told so) rather than failing the run: nothing was, or could be, executed.
@@ -173,6 +201,19 @@ def validate_answer(
     )
 
 
+def _sentences_of(answer: FinalAnswer) -> list[str]:
+    """Every free-text field of an answer, for the contradiction check."""
+    return [
+        answer.summary,
+        answer.root_cause_hypothesis,
+        answer.confidence_rationale,
+        answer.recommended_next_step,
+        *answer.alternative_hypotheses,
+        *answer.limitations,
+        *(item.observation for item in answer.evidence),
+    ]
+
+
 class Coordinator:
     def __init__(
         self,
@@ -207,6 +248,7 @@ class Coordinator:
         records: list[ToolCallRecord] = []
         rounds = tokens_in = tokens_out = 0
         repaired = False  # a real model gets one chance to fix an answer that cited evidence it never retrieved
+        claims_repaired = False  # ...and one to fix an answer whose sentences contradict the tool results
 
         def snapshot(**update: object) -> Investigation:
             usage = Usage(rounds=rounds, tool_calls=len(records), input_tokens=tokens_in, output_tokens=tokens_out)
@@ -226,7 +268,7 @@ class Coordinator:
             request = CompletionRequest(
                 system=system_prompt(live),
                 messages=(*messages, Message("user", FINAL_ROUND_NOTICE)) if last_round else tuple(messages),
-                tools=() if last_round else tool_schemas(),
+                tools=() if last_round else tool_schemas(live),
                 answer_schema=answer_schema(live),
                 max_output_tokens=limits.max_output_tokens,
             )
@@ -256,10 +298,22 @@ class Coordinator:
                 return fail("max_rounds_exceeded")  # asked for tools that were not offered; none are run
 
             if response.final_text is not None:
+                retry_claims = not claims_repaired and not last_round and self._provider.info.kind != "mock"
                 try:
                     findings = validate_answer(
-                        response.final_text, grounded, service, evidence_ceiling(observed), live=live
+                        response.final_text,
+                        grounded,
+                        service,
+                        evidence_ceiling(observed),
+                        live=live,
+                        observed=observed,
+                        retry_contradictions=retry_claims,
                     )
+                except _Contradicted as contradicted:
+                    claims_repaired = True
+                    notice = claim_repair_notice(contradicted.problems)
+                    messages.extend((Message("assistant", response.final_text), Message("user", notice)))
+                    continue
                 except _Reject as rejected:
                     if (
                         rejected.code == "ungrounded_evidence"

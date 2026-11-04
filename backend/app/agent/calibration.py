@@ -34,6 +34,10 @@ class Ceiling:
     def lowers(self, confidence: Confidence) -> bool:
         return _RANK[confidence] > _RANK[self.level]
 
+    def capped(self, level: Confidence, reason: str) -> "Ceiling":
+        """This ceiling, or one at `level` with `reason` if that is lower."""
+        return Ceiling(level, reason) if _RANK[level] < _RANK[self.level] else self
+
 
 def evidence_ceiling(observed: Sequence[tuple[str, dict[str, Any]]]) -> Ceiling:
     """The highest confidence the successful tool results in `observed` (name, payload) support."""

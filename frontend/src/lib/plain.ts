@@ -20,6 +20,8 @@ export function toolSentence(call: Pick<ToolCallRecord, "name" | "arguments">): 
     case "get_service_metrics":
       if (a.metric === "alarm_metric") return "Checked the metric the alarm watches";
       return a.metric ? `Checked the ${String(a.metric).replace(/_ms$/, "").replaceAll("_", " ")} metric` : "Checked a service metric";
+    case "get_related_metrics":
+      return "Checked the other metrics of the same service";
     case "get_recent_deployments":
       return a.hours ? `Looked for releases in the last ${String(a.hours)} hours` : "Looked for recent releases";
     default:

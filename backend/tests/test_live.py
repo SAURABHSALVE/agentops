@@ -20,6 +20,7 @@ from app.live.alarms import alarm_from_raw, alarm_id, to_detail, window_of
 from app.live.diagnostics import infer_level
 from app.live.models import LiveAlarm
 from app.live.reader import Change, ChangeScan, LogHit, LogScan
+from app.live.related import RelatedSpec
 from app.main import create_app
 from app.simulator.service import Simulator
 from tests.auth_helpers import USER_A, USER_B, FakePool, bearer
@@ -65,6 +66,8 @@ class FakeReader:
         self.changes: list[Change] = []
         self.changes_complete = True
         self.no_points = False
+        # neighbouring metrics by name: (value before the alarm, value since). A name not listed has no data.
+        self.related: dict[str, tuple[float, float]] = {"Invocations": (100.0, 400.0), "Duration": (200.0, 210.0)}
         self.calls: list[str] = []
         self.searched: list[tuple[Sequence[str], Sequence[str]]] = []
 
@@ -81,6 +84,22 @@ class FakeReader:
         while moment <= end:
             out.append((moment, 12.0 if moment >= alarm.state_since else 0.0))
             moment += timedelta(minutes=1)
+        return out
+
+    def related_metric_points(
+        self, alarm: LiveAlarm, specs: Sequence[RelatedSpec], start: datetime, end: datetime
+    ) -> dict[str, list[tuple[datetime, float]]]:
+        self.calls.append("related")
+        out: dict[str, list[tuple[datetime, float]]] = {}
+        for spec in specs:
+            if spec.name not in self.related:
+                continue
+            before, since = self.related[spec.name]
+            moment, points = start.replace(second=0, microsecond=0), []
+            while moment <= end:
+                points.append((moment, since if moment >= alarm.state_since else before))
+                moment += timedelta(minutes=1)
+            out[spec.name] = points
         return out
 
     def search_logs(
@@ -608,3 +627,161 @@ def test_an_unknown_namespace_is_not_filtered() -> None:
     assert related_sources("AWS/Lambda") == frozenset(
         {"lambda", "cloudformation", "codedeploy", "codepipeline", "codebuild"}
     )
+
+
+# ---- neighbouring metrics, and answers that contradict the tools ---------------------------------------------
+
+
+class ReadingProvider(LiveProvider):
+    """Also asks for the related metrics, and cites them. Can be made to say the account had no changes."""
+
+    def __init__(self, claim: str | None = None, stubborn: bool = False, cite_as: str = "metrics") -> None:
+        super().__init__()
+        self.claim, self.stubborn, self.cite_as = claim, stubborn, cite_as
+
+    def complete(self, request: CompletionRequest) -> CompletionResponse:
+        results = [decode_tool_result(m.content) for m in request.messages if m.role == "tool"]
+        if not results:
+            self.requests.append(request)
+            return calls(
+                call("get_incident", {}, "c1"),
+                call("search_logs", {"query": "timeout"}, "c2"),
+                call("get_service_metrics", {"metric": "alarm_metric"}, "c3"),
+                call("get_recent_deployments", {"hours": 6}, "c4"),
+                call("get_related_metrics", {}, "c5"),
+            )
+        response = super().complete(request)
+        assert response.final_text is not None
+        answer = json.loads(response.final_text)
+        related = next(p for p in results if "metrics" in p and "without_data" in p)
+        answer["evidence"].append(
+            {"source": self.cite_as, "reference_id": related["reference_ids"][0], "observation": "Traffic rose too."}
+        )
+        told = any("contradicts the tool results" in m.content for m in request.messages if m.role == "user")
+        if self.claim and (self.stubborn or not told):
+            answer["summary"] = self.claim
+        return CompletionResponse(final_text=json.dumps(answer), usage=TokenUsage())
+
+
+def a_config_change(now: datetime) -> list[Change]:
+    return [Change("ev1", now - timedelta(minutes=300), "UpdateFunctionConfiguration", "lambda.amazonaws.com", "dev")]
+
+
+def test_related_metrics_summarise_the_neighbours_and_leave_the_alarms_own_metric_out(
+    live: tuple[TestClient, FakeFactory, LiveProvider], pool: FakePool
+) -> None:
+    client, factory, _ = live
+    iid = incident_id(client, pool)
+    diag = client.app.state.live.diagnostics(USER_A)  # type: ignore[attr-defined]
+    got = diag.get_related_metrics(iid)
+    assert [m.name for m in got.metrics] == ["Invocations", "Duration"]  # Errors is the alarm's own metric
+    assert got.without_data == 2  # Throttles and ConcurrentExecutions have no data
+    traffic = got.metrics[0].summary
+    assert traffic.baseline == 100 and traffic.peak == 400 and traffic.elevated_fraction > 0.8
+    window = f"{got.window_start:%H:%M}-{got.window_end:%H:%M}"
+    assert got.reference_ids == [f"metric:related:{m.name}:{window}" for m in got.metrics]
+    assert "related" in factory.reader.calls
+
+
+def test_related_metrics_say_so_when_there_is_nothing_to_show(
+    live: tuple[TestClient, FakeFactory, LiveProvider], pool: FakePool
+) -> None:
+    from app.errors import MetricNotAvailableError
+
+    client, factory, _ = live
+    iid = incident_id(client, pool)
+    diag = client.app.state.live.diagnostics(USER_A)  # type: ignore[attr-defined]
+    factory.reader.related = {}
+    with pytest.raises(MetricNotAvailableError):
+        diag.get_related_metrics(iid)  # no data: an error with no citable id, never an empty "all quiet"
+
+
+def test_an_unknown_namespace_has_no_related_metrics(sim: Simulator, pool: FakePool, now: datetime) -> None:
+    from app.errors import MetricNotAvailableError
+
+    other = [raw_alarm(now, Namespace="MyCompany/Orders", MetricName="Queued")]
+    client, _, _ = build(sim, pool, FakeReader(now, other))
+    connect(client, pool)
+    iid = incident_id(client, pool)
+    diag = client.app.state.live.diagnostics(USER_A)  # type: ignore[attr-defined]
+    with pytest.raises(MetricNotAvailableError):
+        diag.get_related_metrics(iid)
+
+
+def test_the_related_tool_exists_only_for_a_real_account() -> None:
+    from app.agent.tools import tool_schemas
+
+    assert "get_related_metrics" not in {s.name for s in tool_schemas()}
+    assert "get_related_metrics" in {s.name for s in tool_schemas(live=True)}
+
+
+def test_a_demo_incident_cannot_run_the_related_tool(sim: Simulator) -> None:
+    from app.agent.tools import ToolRunner
+
+    out = ToolRunner(sim, timeout_seconds=5, max_result_bytes=16384).run("INC-1001", "get_related_metrics", "{}")
+    assert not out.ok and out.error_code == "unknown_tool"
+
+
+def test_a_real_model_is_offered_the_related_tool_and_can_cite_what_it_returns(
+    sim: Simulator, pool: FakePool, now: datetime
+) -> None:
+    client, _, provider = build(sim, pool, FakeReader(now), ReadingProvider())
+    connect(client, pool)
+    inv = run(client, pool, incident_id(client, pool))
+    assert "get_related_metrics" in {t.name for t in provider.requests[0].tools}
+    assert "get_related_metrics" in provider.requests[0].system
+    assert inv["status"] == "completed", inv
+    assert any(e["reference_id"].startswith("metric:related:") for e in inv["findings"]["evidence"])
+    assert [t["status"] for t in inv["tool_calls"]] == ["ok"] * 5
+
+
+def test_citing_a_related_metric_as_the_wrong_kind_of_evidence_is_still_rejected(
+    sim: Simulator, pool: FakePool, now: datetime
+) -> None:
+    client, _, _ = build(sim, pool, FakeReader(now), ReadingProvider(cite_as="logs"))
+    connect(client, pool)
+    inv = run(client, pool, incident_id(client, pool))
+    assert inv["status"] == "failed" and inv["failure"]["code"] == "ungrounded_evidence"
+
+
+NO_CHANGES = "Checkout is failing. There were no deployments or changes in the account."
+
+
+def test_an_answer_that_denies_the_changes_it_was_shown_is_sent_back_once_and_the_corrected_one_is_kept(
+    sim: Simulator, pool: FakePool, now: datetime
+) -> None:
+    reader = FakeReader(now)
+    reader.changes = a_config_change(now)
+    client, _, provider = build(sim, pool, reader, ReadingProvider(claim=NO_CHANGES))
+    connect(client, pool)
+    inv = run(client, pool, incident_id(client, pool))
+    assert inv["status"] == "completed", inv
+    assert "no deployments" not in inv["findings"]["summary"]
+    notices = [m.content for m in provider.requests[-1].messages if m.role == "user" and "contradicts" in m.content]
+    assert len(notices) == 1 and "1 that fit" in notices[0]
+    assert not any("Check this" in lim for lim in inv["findings"]["limitations"])  # it was fixed, not just flagged
+
+
+def test_an_answer_that_keeps_denying_them_is_kept_but_flagged_and_capped_at_medium(
+    sim: Simulator, pool: FakePool, now: datetime
+) -> None:
+    reader = FakeReader(now)
+    reader.changes = a_config_change(now)
+    client, _, provider = build(sim, pool, reader, ReadingProvider(claim=NO_CHANGES, stubborn=True))
+    connect(client, pool)
+    inv = run(client, pool, incident_id(client, pool))
+    findings = inv["findings"]
+    assert inv["status"] == "completed", inv
+    assert any(lim.startswith("Check this against the evidence") for lim in findings["limitations"])
+    assert findings["confidence"] == "medium" and findings["confidence_lowered_from"] == "high"
+    assert sum("contradicts" in m.content for m in provider.requests[-1].messages if m.role == "user") == 1  # one retry
+
+
+def test_an_answer_that_is_right_that_there_were_no_changes_is_left_alone(
+    sim: Simulator, pool: FakePool, now: datetime
+) -> None:
+    client, _, provider = build(sim, pool, FakeReader(now), ReadingProvider(claim=NO_CHANGES))
+    connect(client, pool)
+    inv = run(client, pool, incident_id(client, pool))
+    assert inv["status"] == "completed" and inv["findings"]["confidence"] == "high"
+    assert not any("contradicts" in m.content for r in provider.requests for m in r.messages if m.role == "user")

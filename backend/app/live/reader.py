@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from app.connections.models import AwsConnection
 from app.live.models import LiveAlarm
+from app.live.related import RelatedSpec
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,13 @@ class AwsReader(Protocol):
 
     def metric_points(self, alarm: LiveAlarm, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
         """The alarm's own metric (same statistic and period) between start and end, oldest first."""
+        ...
+
+    def related_metric_points(
+        self, alarm: LiveAlarm, specs: Sequence[RelatedSpec], start: datetime, end: datetime
+    ) -> dict[str, list[tuple[datetime, float]]]:
+        """Other metrics of the same resource (same dimensions and period as the alarm), by metric name. A metric with
+        no data is simply absent from the answer."""
         ...
 
     def search_logs(
