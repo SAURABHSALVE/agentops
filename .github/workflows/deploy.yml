@@ -95,12 +95,15 @@ jobs:
           # Daily investigation caps while the live AI is on. Empty means the defaults: 10 per user, 300 for the site.
           USER_DAILY_CAP: ${{ vars.USER_DAILY_CAP }}
           DAILY_CAP: ${{ vars.DAILY_CAP }}
+          # "off" lets any signed-in user with a verified email use the live AI with no access code (the caps are the
+          # limit; the per-user default drops to 5 a day). Empty or "on" keeps the shared access code.
+          REQUIRE_ACCESS_CODE: ${{ vars.REQUIRE_ACCESS_CODE }}
         run: |
           echo "::add-mask::$ALERT_EMAIL"
           npx cdk deploy 'AgentOps-prod-*' -c stage=prod -c "alertEmail=$ALERT_EMAIL" \
             -c "agentProvider=$AGENT_PROVIDER" -c "openaiModel=$OPENAI_MODEL" \
             -c "awsConnect=$AWS_CONNECT" -c "connectAccounts=$CONNECT_ACCOUNTS" \
-            -c "userDailyCap=$USER_DAILY_CAP" -c "dailyCap=$DAILY_CAP" \
+            -c "userDailyCap=$USER_DAILY_CAP" -c "dailyCap=$DAILY_CAP" -c "requireAccessCode=$REQUIRE_ACCESS_CODE" \
             --require-approval "$APPROVAL" --outputs-file ../cdk-outputs.json --progress events
       - name: Smoke test the live site
         working-directory: .

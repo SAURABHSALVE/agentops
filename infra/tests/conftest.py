@@ -41,6 +41,7 @@ def build(
     auth: str = "cognito",
     aws_connect: bool = False,
     connect_accounts: tuple[str, ...] = (),
+    require_access_code: bool = True,
 ) -> Built:
     app = cdk.App()
     cfg = StageConfig(
@@ -51,6 +52,7 @@ def build(
         auth=auth,
         aws_connect=aws_connect,
         connect_accounts=connect_accounts,
+        require_access_code=require_access_code,
     )
     data = DataStack(app, "Data", cfg=cfg, env=ENV)
     auth_stack = AuthStack(app, "Auth", cfg=cfg, env=ENV) if cfg.sign_in else None
@@ -122,6 +124,12 @@ def connect_two(fake_backend: Path) -> Built:
 def connect_any(fake_backend: Path) -> Built:
     """Any user's own account may connect (-c connectAccounts=any)."""
     return build("dev", fake_backend, aws_connect=True, connect_accounts=("*",))
+
+
+@pytest.fixture(scope="session")
+def open_live(fake_backend: Path) -> Built:
+    """The live AI with no access code (-c requireAccessCode=off): signed-in users only, limited by the daily caps."""
+    return build("dev", fake_backend, agent_provider="openai", require_access_code=False)
 
 
 @pytest.fixture(scope="session")
