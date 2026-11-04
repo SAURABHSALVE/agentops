@@ -505,3 +505,43 @@ def test_daily_caps_have_defaults_are_set_in_live_mode_only_and_are_validated(li
     for bad in ({"userDailyCap": "-1"}, {"dailyCap": "lots"}, {"dailyCap": "99999999999"}):
         with pytest.raises(ConfigError):
             stage_config(_ctx(stage="dev", alertEmail=EMAIL, **bad))
+
+
+# ---- no access code: open to signed-in users, limited by the caps ---------------------------------------
+
+
+def test_without_an_access_code_the_function_is_not_given_one_and_may_not_read_that_secret(
+    open_live: Built, live: Built
+) -> None:
+    env = lambda_env(open_live)
+    assert env["AGENT_PROVIDER"] == "openai" and "ACCESS_SECRET_ARN" not in env and "OPENAI_SECRET_ARN" in env
+    assert "COGNITO_USER_POOL_ID" in env, "sign-in is what keeps strangers out of the paid model"
+    assert "ACCESS_SECRET_ARN" in lambda_env(live)  # the default is unchanged
+
+    def secret_statements(built: Built) -> list[dict[str, Any]]:
+        return [
+            s
+            for s in statements(built.backend)
+            if any(
+                a.startswith("secretsmanager:")
+                for a in (s["Action"] if isinstance(s["Action"], list) else [s["Action"]])
+            )
+        ]
+
+    def resources(built: Built) -> int:
+        return sum(len(s["Resource"]) if isinstance(s["Resource"], list) else 1 for s in secret_statements(built))
+
+    assert resources(open_live) < resources(live), "one fewer secret may be read"
+
+
+def test_requiring_no_code_needs_sign_in_and_defaults_to_a_smaller_daily_allowance() -> None:
+    off = stage_config(_ctx(stage="dev", alertEmail=EMAIL, agentProvider="openai", requireAccessCode="off"))
+    assert off.require_access_code is False and off.user_daily_cap == 5
+    assert (
+        stage_config(_ctx(stage="dev", alertEmail=EMAIL, requireAccessCode="off", userDailyCap="8")).user_daily_cap == 8
+    )
+    assert stage_config(_ctx(stage="dev", alertEmail=EMAIL)).require_access_code is True
+    assert stage_config(_ctx(stage="dev", alertEmail=EMAIL, requireAccessCode="")).user_daily_cap == 10
+    for bad in ({"requireAccessCode": "maybe"}, {"requireAccessCode": "off", "auth": "none"}):
+        with pytest.raises(ConfigError):
+            stage_config(_ctx(stage="dev", alertEmail=EMAIL, **bad))

@@ -45,7 +45,6 @@ class BackendStack(Stack):
                     "AGENT_PROVIDER": "openai",
                     "OPENAI_MODEL": cfg.openai_model,
                     "OPENAI_SECRET_ARN": data.openai_key.secret_arn,
-                    "ACCESS_SECRET_ARN": data.access_code.secret_arn,
                     # A live run takes 6 to 12 s; give up well before the 29 s Lambda limit instead of hanging.
                     "OPENAI_TIMEOUT_SECONDS": "12",
                     # Backstops behind the API throttle; per Lambda container, so they are not a global cap.
@@ -58,6 +57,8 @@ class BackendStack(Stack):
                     "INVESTIGATIONS_PER_DAY": str(cfg.daily_cap),
                 }
             )
+        if cfg.live and data.access_code is not None and cfg.require_access_code:
+            env["ACCESS_SECRET_ARN"] = data.access_code.secret_arn
         if auth is not None:
             # Which pool's tokens to trust. The Lambda only reads the pool's public keys, so it needs no permission.
             env["COGNITO_USER_POOL_ID"] = auth.pool.user_pool_id
@@ -121,7 +122,8 @@ class BackendStack(Stack):
         if cfg.live and data.access_code is not None:
             # Read-only, one named secret each (no wildcard, no list). Fetched once per cold start.
             data.openai_key.grant_read(self.function)
-            data.access_code.grant_read(self.function)
+            if cfg.require_access_code:
+                data.access_code.grant_read(self.function)
         # Exactly the four calls the store makes, on exactly one table (no Scan, Query, batch or index access).
         self.function.add_to_role_policy(
             iam.PolicyStatement(

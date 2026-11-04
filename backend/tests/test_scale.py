@@ -292,3 +292,26 @@ def test_the_offline_provider_is_not_given_a_second_chance(sim: Simulator) -> No
     )
     done = run_investigation(sim, provider, "INC-1005")[0]
     assert done.status == "failed" and len(provider.requests) == 2
+
+
+# ---- a real model is never switched on with neither sign-in nor a code --------------------------------
+
+
+def test_a_real_model_with_neither_sign_in_nor_an_access_code_refuses_to_start(sim: Simulator) -> None:
+    with pytest.raises(ConfigError, match="needs sign-in"):
+        create_app(simulator=sim, settings=Settings(storage_mode="memory"), provider=AiScripted())
+
+
+def test_a_real_model_is_fine_with_either_one_and_the_offline_assistant_needs_neither(sim: Simulator) -> None:
+    settings = Settings(storage_mode="memory")
+    create_app(simulator=sim, settings=settings, provider=AiScripted(), access=AccessGate(CODE))
+    create_app(simulator=sim, settings=settings, provider=AiScripted(), verifier=POOL.verifier())
+    create_app(simulator=sim, settings=settings, provider=ScriptedProvider())
+
+
+def test_with_sign_in_and_no_code_a_user_investigates_freely_and_a_visitor_cannot(sim: Simulator) -> None:
+    client = capped_client(sim, POOL, "openai", per_user=3)
+    assert client.get("/api/config", headers=authed(POOL)).json()["write_access"] == "open"
+    assert start(client, USER_A).status_code == 202
+    visitor = client.post("/api/incidents/INC-1001/investigations")
+    assert visitor.status_code == 401 and visitor.json()["error"]["code"] == "sign_in_required"

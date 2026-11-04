@@ -48,6 +48,10 @@ class StageConfig:
     # for the whole site. Change with: -c userDailyCap=10 -c dailyCap=300 (0 means no cap)
     user_daily_cap: int = 10
     daily_cap: int = 300
+    # True (default): the live AI also needs the shared access code, entered once per user. False
+    # (-c requireAccessCode=off): any signed-in user with a verified email may investigate and connect with no code, and
+    # the caps are the limit. Needs sign-in. Without a code the per-user cap defaults to 5 a day instead of 10.
+    require_access_code: bool = True
 
     @property
     def sign_in(self) -> bool:
@@ -106,7 +110,14 @@ def stage_config(scope: Construct) -> StageConfig:
         raise ConfigError("awsConnect=on needs sign-in: a connection belongs to one signed-in user (use auth=cognito).")
     if accounts and connect != "on":
         raise ConfigError("connectAccounts only applies together with awsConnect=on.")
-    caps = {}
+    code = (_context(scope, "requireAccessCode") or "on").lower()
+    if code not in ("on", "off"):
+        raise ConfigError("requireAccessCode must be 'on' or 'off'.")
+    if code == "off" and auth != "cognito":
+        raise ConfigError("requireAccessCode=off needs sign-in (auth=cognito): otherwise anyone could run the live AI.")
+    caps: dict[str, int] = {}
+    if code == "off":
+        caps["user_daily_cap"] = 5  # a smaller default when there is no invitation; an explicit userDailyCap wins below
     for key, name in (("userDailyCap", "user_daily_cap"), ("dailyCap", "daily_cap")):
         raw_cap = _context(scope, key)
         if raw_cap:  # empty (an unset repository variable) means the default
@@ -115,6 +126,7 @@ def stage_config(scope: Construct) -> StageConfig:
             caps[name] = int(raw_cap)
     return StageConfig(
         **caps,
+        require_access_code=code == "on",
         auth=auth,
         aws_connect=connect == "on",
         connect_accounts=accounts,

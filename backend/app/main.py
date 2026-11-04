@@ -17,7 +17,7 @@ from app.agent.sqlite_store import SqliteInvestigationStore
 from app.agent.store import InMemoryInvestigationStore, InvestigationStore
 from app.api import router
 from app.auth import TokenVerifier, build_verifier
-from app.config import APP_VERSION, Settings, load_env_file
+from app.config import APP_VERSION, ConfigError, Settings, load_env_file
 from app.connections.service import ConnectionService
 from app.connections.store import ConnectionStore, InMemoryConnectionStore
 from app.errors import (
@@ -160,6 +160,10 @@ def create_app(
     app.state.access = access or AccessGate(load_access_code())
     app.state.verifier = verifier or build_verifier(settings)  # None unless a Cognito user pool is configured
     info = provider.info
+    if info.kind != "mock" and not app.state.access.required and app.state.verifier is None:
+        # A real model costs money on every investigation. With neither an access code nor sign-in, anyone on the
+        # internet could start them, so refuse to start rather than run open.
+        raise ConfigError("A real AI model needs sign-in (COGNITO_USER_POOL_ID) or an access code to be switched on.")
     app.state.connections = ConnectionService(
         connection_store or _build_connection_store(settings),
         settings,
