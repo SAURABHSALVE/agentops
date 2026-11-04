@@ -32,7 +32,7 @@ from app.agent.models import (
     ToolCallRecord,
     Usage,
 )
-from app.agent.prompts import FINAL_ROUND_NOTICE, USER_PROMPT, encode_tool_result, system_prompt
+from app.agent.prompts import FINAL_ROUND_NOTICE, REPAIR_NOTICE, USER_PROMPT, encode_tool_result, system_prompt
 from app.agent.provider import (
     CompletionRequest,
     CompletionResponse,
@@ -206,6 +206,7 @@ class Coordinator:
         observed: list[tuple[str, dict[str, Any]]] = []  # successful tool results, for the confidence ceiling
         records: list[ToolCallRecord] = []
         rounds = tokens_in = tokens_out = 0
+        repaired = False  # a real model gets one chance to fix an answer that cited evidence it never retrieved
 
         def snapshot(**update: object) -> Investigation:
             usage = Usage(rounds=rounds, tool_calls=len(records), input_tokens=tokens_in, output_tokens=tokens_out)
@@ -260,6 +261,15 @@ class Coordinator:
                         response.final_text, grounded, service, evidence_ceiling(observed), live=live
                     )
                 except _Reject as rejected:
+                    if (
+                        rejected.code == "ungrounded_evidence"
+                        and not repaired
+                        and not last_round
+                        and self._provider.info.kind != "mock"
+                    ):
+                        repaired = True
+                        messages.extend((Message("assistant", response.final_text), Message("user", REPAIR_NOTICE)))
+                        continue
                     return fail(rejected.code)
                 state = RemediationRecord(action_id=findings.remediation.action_id) if findings.remediation else None
                 return snapshot(

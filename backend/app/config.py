@@ -89,7 +89,13 @@ class Settings:
     aws_connect_principal_arn: str = ""
     # Which customer accounts may be registered at all. Empty means only AgentOps's own account, so the first rollout is
     # the owner's account and nobody else's; widening it is a deliberate, reviewed change.
+    # The single entry "*" means any account (the usual way a monitoring service works): safe because each user's role
+    # trusts only this app and only with that user's own ExternalId, which the server makes and never repeats.
     aws_connect_allowed_accounts: tuple[str, ...] = ()
+    # Daily caps on investigations while a real AI model is in use (each costs money). 0 means no cap. Counted in the
+    # database, so they hold across servers; the offline assistant is free and never capped.
+    user_investigations_per_day: int = 0
+    investigations_per_day: int = 0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -126,8 +132,10 @@ class Settings:
         allowed = tuple(a.strip() for a in os.environ.get("AWS_CONNECT_ALLOWED_ACCOUNTS", "").split(",") if a.strip())
         if allowed and not connect_account:
             raise ConfigError("AWS_CONNECT_ALLOWED_ACCOUNTS only applies together with AWS_CONNECT_ACCOUNT_ID.")
-        if any(not _ACCOUNT_ID.fullmatch(a) for a in allowed):
-            raise ConfigError("AWS_CONNECT_ALLOWED_ACCOUNTS must be a comma-separated list of 12-digit account ids.")
+        if allowed != ("*",) and any(not _ACCOUNT_ID.fullmatch(a) for a in allowed):
+            raise ConfigError(
+                "AWS_CONNECT_ALLOWED_ACCOUNTS must be a comma-separated list of 12-digit account ids, or just *."
+            )
         return cls(
             cors_allow_origins=origins,
             agent_provider=provider,
@@ -151,4 +159,6 @@ class Settings:
             aws_connect_account_id=connect_account,
             aws_connect_principal_arn=principal,
             aws_connect_allowed_accounts=allowed,
+            user_investigations_per_day=_int_env("USER_INVESTIGATIONS_PER_DAY", 0, 0, 100_000),
+            investigations_per_day=_int_env("INVESTIGATIONS_PER_DAY", 0, 0, 10_000_000),
         )
