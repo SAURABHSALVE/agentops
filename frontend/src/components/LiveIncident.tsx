@@ -15,7 +15,7 @@ export function LiveIncident() {
   return (
     <div className="space-y-3">
       <nav aria-label="Breadcrumb" className="text-sm text-muted">
-        <Link href="/connect/" className="hover:text-foreground hover:underline">
+        <Link href="/connect/" className="link">
           Connect AWS
         </Link>
         <span aria-hidden="true"> / </span>

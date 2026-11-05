@@ -12,7 +12,7 @@ export default async function IncidentPage(props: PageProps<"/incidents/[id]">) 
   return (
     <div className="space-y-3">
       <nav aria-label="Breadcrumb" className="text-sm text-muted">
-        <Link href="/" className="hover:text-foreground hover:underline">
+        <Link href="/" className="link">
           Incidents
         </Link>
         <span aria-hidden="true"> / </span>

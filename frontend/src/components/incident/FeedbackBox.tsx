@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Busy } from "@/lib/use-workspace";
 import type { Investigation } from "@/lib/types";
+import { Icon, Spinner } from "../ui";
 
 interface Props {
   investigation: Investigation | null;
@@ -21,7 +22,8 @@ export function FeedbackBox({ investigation, busy, onSend }: Props) {
 
   if (sent) {
     return (
-      <section aria-label="Feedback" className="rounded-lg border border-border bg-surface p-4 text-sm">
+      <section aria-label="Feedback" className="card enter flex items-center gap-3 p-4 text-sm">
+        <Icon name="check" className="pop h-5 w-5 shrink-0 text-ok" />
         <p role="status">
           <span className="font-medium">Thanks, feedback saved.</span>{" "}
           <span className="text-muted">You said this was {sent.helpful ? "helpful" : "not helpful"}.</span>
@@ -31,25 +33,24 @@ export function FeedbackBox({ investigation, busy, onSend }: Props) {
   }
 
   return (
-    <section aria-label="Feedback" className="rounded-lg border border-border bg-surface p-4 text-sm">
+    <section aria-label="Feedback" className="card p-5 text-sm">
       <p className="font-medium">Was this answer useful?</p>
-      <div className="mt-2 flex flex-wrap gap-2">
+      <p className="mt-0.5 text-xs text-muted">One click helps the team see where the agent gets it wrong.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
         {([true, false] as const).map((v) => (
           <button
             key={String(v)}
             type="button"
             onClick={() => setVerdict(v)}
             aria-pressed={verdict === v}
-            className={`rounded border px-3 py-1.5 font-medium ${
-              verdict === v ? "border-accent bg-accent text-accent-fg" : "border-border bg-surface-2 hover:border-accent"
-            }`}
+            className={`btn ${verdict === v ? "btn-primary" : "btn-secondary"}`}
           >
             {v ? "Yes, helpful" : "No, not helpful"}
           </button>
         ))}
       </div>
       {verdict !== null && (
-        <div className="mt-3 space-y-2">
+        <div className="enter mt-3 space-y-2">
           <label className="block text-xs text-muted" htmlFor="fb-note">
             What was right or wrong? (optional, kept for the team, never shown to the agent)
           </label>
@@ -59,14 +60,10 @@ export function FeedbackBox({ investigation, busy, onSend }: Props) {
             onChange={(e) => setComment(e.target.value)}
             maxLength={500}
             rows={2}
-            className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm"
+            className="field"
           />
-          <button
-            type="button"
-            disabled={sending}
-            onClick={() => onSend(verdict, comment)}
-            className="rounded bg-accent px-3 py-1.5 font-medium text-accent-fg disabled:cursor-not-allowed disabled:opacity-50"
-          >
+          <button type="button" disabled={sending} onClick={() => onSend(verdict, comment)} className="btn btn-primary">
+            {sending && <Spinner />}
             {sending ? "Saving…" : "Send feedback"}
           </button>
         </div>

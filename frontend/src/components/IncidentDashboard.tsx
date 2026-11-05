@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ApiError, api } from "@/lib/api";
 import type { IncidentSummary } from "@/lib/types";
 import { IncidentList } from "./IncidentList";
+import { Note, Skeleton } from "./ui";
 
 type State =
   | { phase: "loading" }
@@ -28,26 +29,28 @@ export function IncidentDashboard() {
 
   if (state.phase === "loading") {
     return (
-      <div role="status" aria-label="Loading incidents" className="space-y-2">
-        <div className="h-20 rounded-lg border border-border bg-surface motion-safe:animate-pulse" />
-        <div className="h-20 rounded-lg border border-border bg-surface motion-safe:animate-pulse" />
-        <span className="sr-only">Loading incidents…</span>
+      <div className="space-y-2" aria-busy="true">
+        <Skeleton className="h-7 w-40" />
+        <Skeleton className="h-20" label="Loading incidents" />
+        <Skeleton className="h-20" />
+        <Skeleton className="h-20" />
       </div>
     );
   }
 
   if (state.phase === "error") {
     return (
-      <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 p-6">
-        <h2 className="text-lg font-semibold text-danger">Could not load incidents</h2>
-        <p className="mt-1 text-sm text-muted">{state.message}</p>
+      <div>
+        <Note tone="danger" alert title="Could not load incidents">
+          {state.message}
+        </Note>
         <button
           type="button"
           onClick={() => {
             setState({ phase: "loading" });
             setAttempt((n) => n + 1);
           }}
-          className="mt-4 rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg"
+          className="btn btn-primary mt-3"
         >
           Try again
         </button>

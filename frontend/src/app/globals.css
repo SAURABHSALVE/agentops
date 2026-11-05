@@ -1,40 +1,53 @@
 @import "tailwindcss";
 
+/* Design tokens. Light by default, dark when the system asks for it. Every colour in the UI comes from here. */
 :root {
-  --background: #f5f6f8;
+  --background: #f6f7fb;
   --surface: #ffffff;
-  --surface-2: #eef0f4;
-  --border: #d9dde4;
-  --foreground: #14181f;
-  --muted: #566070;
-  --accent: #2557c8;
+  --surface-2: #f0f2f8;
+  --border: #e2e5ee;
+  --border-strong: #cdd2e0;
+  --foreground: #121521;
+  --muted: #5b6478;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
   --accent-fg: #ffffff;
-  --sev-critical: #b82318;
-  --sev-high: #a85200;
-  --sev-medium: #7d6000;
-  --sev-low: #455368;
-  --ok: #17702f;
-  --warn: #8a5a00;
-  --danger: #b82318;
+  --accent-soft: color-mix(in srgb, var(--accent) 9%, transparent);
+  --sev-critical: #d12d3d;
+  --sev-high: #c2570c;
+  --sev-medium: #9a6b00;
+  --sev-low: #5b6478;
+  --ok: #138a4b;
+  --warn: #a16207;
+  --danger: #d12d3d;
+  --radius: 14px;
+  --shadow-sm: 0 1px 2px rgb(18 21 33 / 0.05), 0 1px 3px rgb(18 21 33 / 0.04);
+  --shadow-md: 0 4px 14px rgb(18 21 33 / 0.07), 0 2px 4px rgb(18 21 33 / 0.04);
+  --header-bg: rgb(255 255 255 / 0.78);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0d1117;
-    --surface: #151b23;
-    --surface-2: #1d2530;
-    --border: #2b3441;
-    --foreground: #e6e9ee;
-    --muted: #9aa5b4;
-    --accent: #7aa2ff;
-    --accent-fg: #0d1117;
-    --sev-critical: #ff8a80;
-    --sev-high: #ffa657;
-    --sev-medium: #e3b341;
-    --sev-low: #9aa5b4;
-    --ok: #56d364;
-    --warn: #e3b341;
-    --danger: #ff8a80;
+    --background: #0a0d14;
+    --surface: #121722;
+    --surface-2: #181e2b;
+    --border: #232a3a;
+    --border-strong: #323b50;
+    --foreground: #e9ecf5;
+    --muted: #98a2b8;
+    --accent: #8b97ff;
+    --accent-hover: #a3adff;
+    --accent-fg: #0a0d14;
+    --sev-critical: #ff8a94;
+    --sev-high: #ffa86b;
+    --sev-medium: #e8c04a;
+    --sev-low: #98a2b8;
+    --ok: #4ade80;
+    --warn: #f0c04a;
+    --danger: #ff8a94;
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35);
+    --shadow-md: 0 6px 20px rgb(0 0 0 / 0.4);
+    --header-bg: rgb(10 13 20 / 0.78);
   }
 }
 
@@ -43,10 +56,12 @@
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-danger: var(--danger);
@@ -54,13 +69,302 @@
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ---- Components ------------------------------------------------------------------------------------------------
+   Small, named building blocks so screens stay consistent and the markup stays readable. */
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .card-interactive {
+    transition:
+      transform 160ms ease,
+      box-shadow 160ms ease,
+      border-color 160ms ease;
+  }
+  .card-interactive:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--border-strong);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    padding: 0.5rem 0.95rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease,
+      box-shadow 150ms ease,
+      transform 100ms ease,
+      opacity 150ms ease;
+  }
+  .btn:active:not(:disabled) {
+    transform: translateY(0.5px) scale(0.99);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+    box-shadow: var(--shadow-sm);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    box-shadow: var(--shadow-md);
+  }
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--foreground);
+    border-color: var(--border-strong);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .btn-danger {
+    background: var(--danger);
+    color: #fff;
+  }
+  .btn-danger:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+  .btn-danger-outline {
+    background: var(--surface);
+    color: var(--foreground);
+    border-color: var(--border-strong);
+  }
+  .btn-danger-outline:hover:not(:disabled) {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+  .btn-sm {
+    padding: 0.3rem 0.65rem;
+    font-size: 0.8125rem;
+  }
+  .btn-lg {
+    padding: 0.7rem 1.25rem;
+    font-size: 0.95rem;
+    border-radius: 12px;
+  }
+
+  .field {
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--foreground);
+    padding: 0.5rem 0.7rem;
+    font-size: 0.875rem;
+    transition:
+      border-color 150ms ease,
+      box-shadow 150ms ease;
+  }
+  .field::placeholder {
+    color: color-mix(in srgb, var(--muted) 75%, transparent);
+  }
+  .field:hover {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+
+  .eyebrow {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .callout {
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+  }
+
+  .link {
+    color: var(--accent);
+    text-underline-offset: 3px;
+  }
+  .link:hover {
+    text-decoration: underline;
+  }
+
+  /* A disclosure ("details") that looks like part of the page, with a turning arrow. */
+  .disclosure > summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 500;
+    border-radius: 8px;
+  }
+  .disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+  .disclosure > summary::before {
+    content: "";
+    width: 0.45rem;
+    height: 0.45rem;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(-45deg);
+    transition: transform 160ms ease;
+    flex: none;
+    margin-right: 0.15rem;
+  }
+  .disclosure[open] > summary::before {
+    transform: rotate(45deg);
+  }
+}
+
+/* ---- Motion ----------------------------------------------------------------------------------------------------- */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 9px transparent;
+  }
+}
+@keyframes pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.enter {
+  animation: fade-up 280ms ease both;
+}
+.enter-stagger > * {
+  animation: fade-up 320ms ease both;
+}
+.enter-stagger > *:nth-child(2) {
+  animation-delay: 50ms;
+}
+.enter-stagger > *:nth-child(3) {
+  animation-delay: 100ms;
+}
+.enter-stagger > *:nth-child(4) {
+  animation-delay: 150ms;
+}
+.enter-stagger > *:nth-child(n + 5) {
+  animation-delay: 200ms;
+}
+.spinner {
+  width: 1em;
+  height: 1em;
+  border-radius: 9999px;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  animation: spin 700ms linear infinite;
+  flex: none;
+}
+.skeleton {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+.live-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 9999px;
+  background: var(--accent);
+  animation: pulse-ring 1.4s ease-out infinite;
+  flex: none;
+}
+.pop {
+  animation: pop 280ms ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .enter,
+  .enter-stagger > *,
+  .skeleton,
+  .live-dot,
+  .pop {
+    animation: none;
+  }
+  .spinner {
+    animation-duration: 1.6s;
+  }
+  .btn,
+  .card-interactive {
+    transition: none;
+  }
 }

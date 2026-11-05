@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { DEMO_HINTS } from "@/lib/plain";
+import { Icon } from "./ui";
 
 /** The call-to-action. It links to an incident this API really serves (simulated and captured data have
  *  different ids), preferring the one tagged "Start here"; until the list loads it jumps to the list. */
@@ -24,14 +25,20 @@ export function DemoLink() {
     return () => ctl.abort();
   }, []);
 
-  const className = "rounded bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:opacity-90";
+  const className = "btn btn-primary btn-lg group";
+  const inner = (
+    <>
+      Try the 2-minute demo
+      <Icon name="arrow" className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+    </>
+  );
   return target ? (
     <Link href={`/incidents/${target}`} className={className}>
-      Try the 2-minute demo
+      {inner}
     </Link>
   ) : (
     <a href="#incidents-heading" className={className}>
-      Try the 2-minute demo
+      {inner}
     </a>
   );
 }
