@@ -110,10 +110,15 @@ export function useWorkspace(incidentId: string) {
     async (kind: Exclude<Busy, null>, call: () => Promise<Investigation>) => {
       setBusy(kind);
       setActionError(null);
+      let failed = false;
       try {
         const next = await call();
+        // Re-read the timeline and incident first, so the outcome and its history appear together instead of the
+        // history catching up a moment later.
+        await refreshAux();
         if (alive.current) setInvestigation(next);
       } catch (e) {
+        failed = true;
         if (alive.current) {
           if (e instanceof ApiError && e.status === 401 && e.code === "unauthorized") {
             setNeedsCode(true);
@@ -121,8 +126,8 @@ export function useWorkspace(incidentId: string) {
           } else setActionError(message(e));
         }
       } finally {
+        if (failed) await refreshAux();
         if (alive.current) setBusy(null);
-        await refreshAux();
       }
     },
     [refreshAux],

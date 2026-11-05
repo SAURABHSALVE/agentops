@@ -17,16 +17,21 @@ const statusLabel: Record<IncidentStatus, string> = {
 function Pill({ color, children }: { color: string; children: React.ReactNode }) {
   return (
     <span
-      className="inline-flex items-center rounded border px-1.5 py-0.5 text-xs font-medium capitalize"
+      className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium capitalize"
       style={{
         color,
-        borderColor: `color-mix(in srgb, ${color} 40%, transparent)`,
-        backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)`,
+        borderColor: `color-mix(in srgb, ${color} 32%, transparent)`,
+        backgroundColor: `color-mix(in srgb, ${color} 10%, transparent)`,
       }}
     >
+      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
       {children}
     </span>
   );
+}
+
+export function severityColorOf(severity: Severity): string {
+  return severityColor[severity];
 }
 
 export function SeverityBadge({ severity }: { severity: Severity }) {

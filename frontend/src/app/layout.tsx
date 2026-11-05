@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "AgentOps AI",
-  description: "AI-assisted incident investigation over demo telemetry.",
+  description: "Find out why something broke, with proof. An AI incident investigator that shows its evidence.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -26,7 +26,21 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <AppHeader />
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">{children}</main>
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">{children}</main>
+        <footer className="border-t border-border">
+          <p className="mx-auto w-full max-w-6xl px-4 py-5 text-xs text-muted sm:px-6">
+            AgentOps AI is a portfolio project. The AI only proposes: the backend checks every answer, and nothing
+            changes without your approval.{" "}
+            <a
+              href="https://github.com/SAURABHSALVE/agentops"
+              className="link"
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              Source on GitHub
+            </a>
+          </p>
+        </footer>
       </body>
     </html>
   );

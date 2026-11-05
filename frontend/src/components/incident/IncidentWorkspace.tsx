@@ -6,19 +6,25 @@ import { formatDateTime, formatWindow } from "@/lib/format";
 import { useAuth } from "@/lib/use-auth";
 import { useWorkspace } from "@/lib/use-workspace";
 import { AccessCode } from "../AccessCode";
-import { SeverityBadge, StatusBadge } from "../badges";
+import { SeverityBadge, StatusBadge, severityColorOf } from "../badges";
+import { Note, Skeleton } from "../ui";
 import { EvidencePanel } from "./EvidencePanel";
 import { FeedbackBox } from "./FeedbackBox";
 import { InvestigationPanel } from "./InvestigationPanel";
 import { RemediationPanel } from "./RemediationPanel";
 import { Timeline } from "./Timeline";
 
-function Skeleton() {
+function Loading() {
   return (
-    <div role="status" aria-label="Loading incident" className="space-y-4">
-      <div className="h-32 rounded-lg border border-border bg-surface motion-safe:animate-pulse" />
-      <div className="h-56 rounded-lg border border-border bg-surface motion-safe:animate-pulse" />
-      <span className="sr-only">Loading incident…</span>
+    <div aria-busy="true" className="space-y-4">
+      <Skeleton className="h-40" label="Loading incident" />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="space-y-4">
+          <Skeleton className="h-56" />
+          <Skeleton className="h-40" />
+        </div>
+        <Skeleton className="h-64" />
+      </div>
     </div>
   );
 }
@@ -27,14 +33,15 @@ export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
   const w = useWorkspace(incidentId);
   const auth = useAuth();
 
-  if (w.load === "loading") return <Skeleton />;
+  if (w.load === "loading") return <Loading />;
   if (w.load === "not_found") return <NotFound />;
   if (w.load === "error" || !w.incident) {
     return (
-      <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 p-6">
-        <h1 className="text-lg font-semibold text-danger">Could not load this incident</h1>
-        <p className="mt-1 text-sm text-muted">{w.loadError}</p>
-        <Link href="/" className="mt-4 inline-block text-sm underline">
+      <div className="space-y-3">
+        <Note tone="danger" alert title="Could not load this incident">
+          {w.loadError}
+        </Note>
+        <Link href="/" className="btn btn-secondary">
           Back to incidents
         </Link>
       </div>
@@ -47,36 +54,35 @@ export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
   return (
     <div className="space-y-4">
       {live && (
-        <p role="note" className="rounded border border-accent/40 bg-accent/10 px-3 py-2 text-sm">
-          <strong className="font-medium">Your AWS account (live).</strong> This is real data, read through your
-          read-only role. AgentOps cannot change anything there, so it suggests next steps but offers no action to run.
-        </p>
+        <Note tone="info" title="Your AWS account (live)">
+          This is real data, read through your read-only role. AgentOps cannot change anything there, so it suggests next
+          steps but offers no action to run.
+        </Note>
       )}
-      <header className="rounded-lg border border-border bg-surface p-4">
+
+      <header className="card relative overflow-hidden p-5 pl-6">
+        <span
+          aria-hidden="true"
+          className="absolute inset-y-0 left-0 w-1.5"
+          style={{ backgroundColor: severityColorOf(incident.severity) }}
+        />
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-xs text-muted">{incident.id}</span>
           <SeverityBadge severity={incident.severity} />
           <StatusBadge status={incident.status} />
         </div>
-        <h1 className="mt-2 text-xl font-semibold tracking-tight">{incident.title}</h1>
-        <p className="mt-1 text-sm text-muted">{incident.summary}</p>
-        <dl className="mt-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div>
-            <dt className="text-xs text-muted">Service</dt>
-            <dd className="font-mono">{incident.service}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted">Started</dt>
-            <dd>{formatDateTime(incident.started_at)}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted">Investigation window</dt>
-            <dd>{formatWindow(incident.started_at, incident.window_end)}</dd>
-          </div>
-          {incident.signals.map((s) => (
-            <div key={s.label}>
-              <dt className="text-xs text-muted">{s.label}</dt>
-              <dd>{s.value}</dd>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight">{incident.title}</h1>
+        <p className="mt-1 max-w-3xl text-sm text-muted">{incident.summary}</p>
+        <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            ["Service", <span key="s" className="font-mono">{incident.service}</span>],
+            ["Started", formatDateTime(incident.started_at)],
+            ["Investigation window", formatWindow(incident.started_at, incident.window_end)],
+            ...incident.signals.map((s) => [s.label, s.value] as const),
+          ].map(([label, value]) => (
+            <div key={String(label)} className="rounded-xl bg-surface-2 px-3 py-2">
+              <dt className="text-xs text-muted">{label}</dt>
+              <dd className="mt-0.5">{value}</dd>
             </div>
           ))}
         </dl>
@@ -85,12 +91,12 @@ export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
       {w.needsCode && <AccessCode onSaved={w.codeAccepted} />}
 
       {w.actionError && (
-        <p role="alert" className="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+        <Note tone="danger" alert>
           {w.actionError}
-        </p>
+        </Note>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-start">
         <div className="space-y-4">
           <InvestigationPanel
             investigation={w.investigation}
@@ -114,7 +120,9 @@ export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
             />
           )}
         </div>
-        <Timeline events={w.timeline} />
+        <div className="lg:sticky lg:top-24">
+          <Timeline events={w.timeline} />
+        </div>
       </div>
     </div>
   );

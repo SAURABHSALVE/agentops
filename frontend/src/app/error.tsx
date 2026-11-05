@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { Note } from "@/components/ui";
 
 export default function ErrorPage({ error, retry }: { error: unknown; retry: () => void }) {
   useEffect(() => {
@@ -9,14 +10,11 @@ export default function ErrorPage({ error, retry }: { error: unknown; retry: () 
   }, [error]);
 
   return (
-    <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 p-6">
-      <h1 className="text-lg font-semibold text-danger">Something went wrong</h1>
-      <p className="mt-1 text-sm text-muted">The page could not be displayed. You can try again.</p>
-      <button
-        type="button"
-        onClick={() => retry()}
-        className="mt-4 rounded bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg"
-      >
+    <div className="space-y-3">
+      <Note tone="danger" alert title="Something went wrong">
+        The page could not be displayed. You can try again.
+      </Note>
+      <button type="button" onClick={() => retry()} className="btn btn-primary">
         Try again
       </button>
     </div>

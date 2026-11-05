@@ -237,7 +237,7 @@ try {
         await setValue("#aws-role-arn", "nonsense");
         check("a malformed ARN is refused in plain words", (await clickButton("Save role")) && (await waitText("Something in the form is not valid", 15000)));
         await setValue("#aws-role-arn", "arn:aws:iam::999988887777:role/AgentOpsReadOnly");
-        check("another account is refused during the first rollout", (await clickButton("Save role")) && (await waitText("not enabled for connecting", 15000)));
+        check("another account is refused during the first rollout", (await clickButton("Save role")) && (await waitText("not allowed to connect on this site", 15000)));
         await setValue("#aws-role-arn", "arn:aws:iam::111122223333:role/AgentOpsReadOnly");
         check("the owner's account is accepted, and the page says it is not tested yet", (await clickButton("Save role")) && (await waitText("Not tested yet", 15000)));
         // Not pressed here: it would make this machine call a real AWS account. The backend tests cover the reading.

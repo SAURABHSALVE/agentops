@@ -5,10 +5,8 @@ import { useMemo, useState } from "react";
 import { formatDateTime } from "@/lib/format";
 import { DEMO_HINTS } from "@/lib/plain";
 import type { IncidentStatus, IncidentSummary, Severity } from "@/lib/types";
-import { SeverityBadge, StatusBadge } from "./badges";
-
-const fieldClass =
-  "rounded border border-border bg-surface px-2 py-1.5 text-sm text-foreground placeholder:text-muted";
+import { SeverityBadge, StatusBadge, severityColorOf } from "./badges";
+import { Icon } from "./ui";
 
 export function IncidentList({ incidents }: { incidents: IncidentSummary[] }) {
   const [query, setQuery] = useState("");
@@ -33,11 +31,14 @@ export function IncidentList({ incidents }: { incidents: IncidentSummary[] }) {
   };
 
   return (
-    <section aria-labelledby="incidents-heading">
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-        <h2 id="incidents-heading" className="text-xl font-semibold tracking-tight">
-          Incidents
-        </h2>
+    <section aria-labelledby="incidents-heading" className="scroll-mt-24">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 id="incidents-heading" className="text-xl font-semibold tracking-tight">
+            Incidents
+          </h2>
+          <p className="mt-0.5 text-sm text-muted">Pick one to see what the agent finds. Nothing runs until you press Investigate.</p>
+        </div>
         <form
           role="search"
           aria-label="Filter incidents"
@@ -51,7 +52,7 @@ export function IncidentList({ incidents }: { incidents: IncidentSummary[] }) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Service or title"
-              className={`${fieldClass} w-44`}
+              className="field w-44"
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-muted">
@@ -59,7 +60,7 @@ export function IncidentList({ incidents }: { incidents: IncidentSummary[] }) {
             <select
               value={severity}
               onChange={(e) => setSeverity(e.target.value as Severity | "all")}
-              className={fieldClass}
+              className="field"
             >
               <option value="all">All</option>
               <option value="critical">Critical</option>
@@ -73,7 +74,7 @@ export function IncidentList({ incidents }: { incidents: IncidentSummary[] }) {
             <select
               value={status}
               onChange={(e) => setStatus(e.target.value as IncidentStatus | "all")}
-              className={fieldClass}
+              className="field"
             >
               <option value="all">All</option>
               <option value="open">Open</option>
@@ -90,47 +91,57 @@ export function IncidentList({ incidents }: { incidents: IncidentSummary[] }) {
       </p>
 
       {filtered.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border bg-surface p-8 text-center">
-          <p className="font-medium">No incidents match these filters.</p>
+        <div className="card border-dashed p-10 text-center">
+          <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-surface-2 text-muted">
+            <Icon name="search" />
+          </span>
+          <p className="mt-3 font-medium">No incidents match these filters.</p>
           <p className="mt-1 text-sm text-muted">Try a different search or clear the filters.</p>
           {hasFilters && (
-            <button
-              type="button"
-              onClick={clear}
-              className="mt-4 rounded border border-border bg-surface-2 px-3 py-1.5 text-sm font-medium hover:border-accent"
-            >
+            <button type="button" onClick={clear} className="btn btn-secondary mt-4">
               Clear filters
             </button>
           )}
         </div>
       ) : (
-        <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
+        <ul className="enter-stagger space-y-2.5">
           {filtered.map((i) => (
             <li key={i.id}>
               <Link
                 href={`/incidents/${i.id}`}
-                className="grid gap-1 px-4 py-3 hover:bg-surface-2 sm:grid-cols-[1fr_auto] sm:items-center sm:gap-4"
+                className="card card-interactive group relative grid gap-1 overflow-hidden py-3.5 pl-5 pr-4 sm:grid-cols-[1fr_auto] sm:items-center sm:gap-4"
               >
+                <span
+                  aria-hidden="true"
+                  className="absolute inset-y-0 left-0 w-1"
+                  style={{ backgroundColor: severityColorOf(i.severity) }}
+                />
                 <span className="min-w-0">
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-xs text-muted">{i.id}</span>
                     {DEMO_HINTS[i.id] && (
-                      <span className="rounded border border-accent/40 px-1.5 py-0.5 text-xs text-accent">
+                      <span className="rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">
                         {DEMO_HINTS[i.id].tag}
                       </span>
                     )}
                     <SeverityBadge severity={i.severity} />
                     <StatusBadge status={i.status} />
                   </span>
-                  <span className="mt-1 block font-medium">{i.title}</span>
+                  <span className="mt-1.5 block font-medium">{i.title}</span>
                   <span className="block text-sm text-muted">
                     <span className="font-mono">{i.service}</span>
                     {DEMO_HINTS[i.id] && <span> · {DEMO_HINTS[i.id].hint}</span>}
                   </span>
                 </span>
-                <span className="text-xs text-muted sm:text-right">
-                  <span className="block">Updated</span>
-                  <span className="block">{formatDateTime(i.updated_at)}</span>
+                <span className="flex items-center gap-3 text-xs text-muted sm:text-right">
+                  <span>
+                    <span className="block">Updated</span>
+                    <span className="block">{formatDateTime(i.updated_at)}</span>
+                  </span>
+                  <Icon
+                    name="arrow"
+                    className="hidden h-4 w-4 text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-accent sm:block"
+                  />
                 </span>
               </Link>
             </li>

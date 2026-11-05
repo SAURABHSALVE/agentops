@@ -33,7 +33,8 @@ export function DataModeBadge() {
 
   const label = LABELS[mode];
   return (
-    <p className="rounded border border-border bg-surface-2 px-2 py-1 text-xs text-muted" title={label.title}>
+    <p className="flex items-center gap-2 text-xs text-muted" title={label.title}>
+      <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
       {label.text}
     </p>
   );
