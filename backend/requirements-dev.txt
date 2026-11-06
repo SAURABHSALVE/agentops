@@ -1,4 +1,4 @@
-﻿annotated-doc==0.0.5
+annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
 ast_serialize==0.13.1
@@ -28,7 +28,7 @@ typing-inspection==0.4.4
 typing_extensions==4.16.0
 uvicorn==0.54.0
 # Added for the Lambda/DynamoDB work: direct pins, transitive packages (botocore, ...) resolve at install.
-boto3==1.43.122
+boto3==1.43.123
 mangum==0.22.0
 # moto has no installable PyYAML wheel on Python 3.15 yet, so the marker skips it there (its tests importorskip).
 moto[dynamodb]==5.2.5; python_version < "3.15"
